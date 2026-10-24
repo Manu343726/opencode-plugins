@@ -7,6 +7,8 @@
  * The panel version needed all three and the user still had to know it existed.
  */
 
+import * as fs from "node:fs";
+
 import { jsx } from "@opentui/solid/jsx-runtime";
 import { createMemo, createSignal, onCleanup } from "solid-js";
 
@@ -119,6 +121,11 @@ function SidebarBody(props: { sessionID: string; ttlMs: number }) {
   };
 
   const stop = context.data.listen(({ details }) => {
+    if (details.type.startsWith("session.execution.")) {
+      try {
+        fs.appendFileSync("/tmp/opencode/exec.log", `${details.type} ${JSON.stringify(details).slice(0, 500)}\n`);
+      } catch {}
+    }
     const id = sessionOf(details);
     switch (details.type) {
       case "session.execution.succeeded":
