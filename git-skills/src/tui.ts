@@ -38,6 +38,7 @@ import {
 import {
   addToList,
   projectDeclaresPlugin,
+  readPluginOptions,
   readConfig,
   readLists,
   removeFromList,
@@ -190,12 +191,14 @@ export default Plugin.define({
     const projectDir = (): string => context.location?.directory ?? process.cwd();
 
     // Settings, not content: where the forge lives and how to authenticate to it.
-    const settings = context.options as { apiBase?: string; token?: string };
+    // Read from the configuration, because the terminal half receives an empty
+    // options object from the host — measured, and the same gap the sidebar had.
+    const declared = await readPluginOptions(projectDir(), "git-skills");
     const forge = {
-      apiBase: typeof settings.apiBase === "string" ? settings.apiBase : undefined,
+      apiBase: typeof declared.apiBase === "string" ? declared.apiBase : undefined,
       token:
-        typeof settings.token === "string" && settings.token !== ""
-          ? settings.token
+        typeof declared.token === "string" && declared.token !== ""
+          ? declared.token
           : (process.env.GIT_SKILLS_TOKEN ?? process.env.FORGEJO_TOKEN),
     };
 
