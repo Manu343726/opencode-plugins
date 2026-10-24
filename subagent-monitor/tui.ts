@@ -291,7 +291,7 @@ export default Plugin.define({
     // The terminal half receives no options from the host; they are read from the
     // project's configuration, which is where they are declared.
     const directory = context.location?.directory ?? process.cwd();
-    const settings = await readPluginOptions(directory);
+    const settings = await readPluginOptions(directory, "subagent-monitor");
     const ttlMs = finishedTtlMs({ options: settings });
     const view = viewOf(settings);
 

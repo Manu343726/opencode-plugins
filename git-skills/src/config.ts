@@ -125,6 +125,7 @@ function optionScope(
 function locate(text: string): {
   readonly index: number;
   readonly bundle: boolean;
+  readonly options: Record<string, unknown>;
   readonly scope: { readonly key: string | null; readonly values: Record<string, unknown> };
 } | undefined {
   const errors: ParseError[] = [];
@@ -141,7 +142,7 @@ function locate(text: string): {
         ? ((entry as Record<string, unknown>).options as Record<string, unknown> | undefined) ?? {}
         : {};
     const bundle = isBundle(entry);
-    return { index, bundle, scope: optionScope({ index, options }, bundle) };
+    return { index, bundle, options, scope: optionScope({ index, options }, bundle) };
   }
   return undefined;
 }
@@ -449,7 +450,10 @@ export async function projectDeclaresPlugin(projectDir: string): Promise<string 
  * options; the terminal half has to read them, which is what this does — the
  * project's file over the machine's, the same merge the content follows.
  */
-export async function readPluginOptions(projectDir: string): Promise<Record<string, unknown>> {
+export async function readPluginOptions(
+  projectDir: string,
+  key: string,
+): Promise<Record<string, unknown>> {
   const files = [await findGlobalConfigFile(), await findProjectConfigFile(projectDir)];
   const merged: Record<string, unknown> = {};
 
@@ -457,7 +461,13 @@ export async function readPluginOptions(projectDir: string): Promise<Record<stri
     if (!file) continue;
     const found = locate(await readConfig(file));
     if (!found) continue;
-    Object.assign(merged, found.scope.values);
+
+    // A bundle nests each plugin's options under its own name; a standalone
+    // installation keeps them at the top of the entry.
+    const values = found.bundle ? found.options[key] : found.options;
+    if (values && typeof values === "object" && !Array.isArray(values)) {
+      Object.assign(merged, values as Record<string, unknown>);
+    }
   }
   return merged;
 }
