@@ -12,7 +12,7 @@
  */
 
 import { jsx } from "@opentui/solid/jsx-runtime";
-import { For, Show, createMemo, createSignal, onCleanup, onMount } from "solid-js";
+import { For, Show, createMemo, createSignal } from "solid-js";
 
 import { Plugin } from "@opencode/plugin/tui";
 import type { Context } from "@opencode/plugin/tui/context";
@@ -193,35 +193,32 @@ function Browser(props: { context: Context; directory: string; done: () => void 
   const [query, setQuery] = createSignal("");
   const [selected, setSelected] = createSignal(0);
   const [data, setData] = createSignal<Data | undefined>(undefined);
+  const [project, setProject] = createSignal<Row[]>([]);
   const [busy, setBusy] = createSignal(true);
 
   const reload = async (): Promise<void> => {
     setBusy(true);
     try {
-      setData(await load(props.directory));
+      const loaded = await load(props.directory);
+      setData(loaded);
+      setProject(await projectRows(loaded, props.directory));
     } catch {
       setData(undefined);
+      setProject([]);
     } finally {
       setBusy(false);
     }
   };
 
-  onMount(() => void reload());
-  onCleanup(() => {});
+  // Started here rather than in a lifecycle hook: a dialog has to show
+  // something on its first paint, and `onMount` was not running for this
+  // component — measured: the dialog stayed on "Loading…" with 0 items.
+  void reload();
 
   const all = createMemo<Row[]>(() => {
     const current = data();
     if (!current) return [];
-    // The project view needs the digests, so it is recomputed when data changes
-    // and kept in state by `projectCache`.
-    return view() === "catalog" ? catalogRows(current) : projectCache();
-  });
-
-  const [projectCache, setProjectCache] = createSignal<Row[]>([]);
-  createMemo(() => {
-    const current = data();
-    if (!current) return;
-    void projectRows(current, props.directory).then(setProjectCache);
+    return view() === "catalog" ? catalogRows(current) : project();
   });
 
   const rows = createMemo<Row[]>(() => {
