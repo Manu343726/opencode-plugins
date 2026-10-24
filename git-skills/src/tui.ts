@@ -406,11 +406,24 @@ function Browser(props: { context: Context; directory: string; done: () => void 
   };
 
   const muted = (): string | undefined => props.context.theme?.text?.muted;
+  const accent = (): string | undefined => props.context.theme?.text?.accent;
+
+  /**
+   * Everything reactive is a getter.
+   *
+   * Without the Solid compiler nothing wraps an expression in one for us: a
+   * prop holding a computed value is evaluated once, at build time, and the
+   * dialog then shows the values it was born with — measured as a modal stuck
+   * on "Loading…" with zero items while the load itself took 164 ms. Passing
+   * `() => …` is what the compiler would have produced.
+   */
+  const visible = (): Row[] => rows().slice(offset(), offset() + WINDOW);
+  const selectedRow = (): Row | undefined => current();
 
   const tab = (id: View, label: string) =>
     h("text", {
-      fg: view() === id ? props.context.theme?.text?.accent : muted(),
-      children: view() === id ? `[${label}]` : ` ${label} `,
+      fg: () => (view() === id ? accent() : muted()),
+      children: () => (view() === id ? `[${label}]` : ` ${label} `),
     });
 
   return h("box", {
@@ -428,9 +441,8 @@ function Browser(props: { context: Context; directory: string; done: () => void 
       }),
       h("input", {
         focused: true,
-        placeholder:
+        placeholder: () =>
           view() === "catalog" ? "Search every known repository" : "Search what this project uses",
-        value: query(),
         onInput: (value: string) => {
           setQuery(value);
           setSelected(0);
@@ -438,31 +450,32 @@ function Browser(props: { context: Context; directory: string; done: () => void 
         onKeyDown: onKey,
       }),
       h(Show, {
-        when: !busy() && rows().length > 0,
-        fallback: h("text", {
-          fg: muted(),
-          children: busy() ? "Loading…" : "Nothing matches.",
-        }),
+        when: () => !busy() && rows().length > 0,
+        fallback: () =>
+          h("text", {
+            fg: () => muted(),
+            children: () => (busy() ? "Loading…" : "Nothing matches."),
+          }),
         children: () =>
           h(For, {
-            each: rows().slice(offset(), offset() + WINDOW),
+            each: visible(),
             children: (row: Row) =>
               h("text", {
-                fg: rows()[Math.min(selected(), rows().length - 1)] === row ? undefined : muted(),
-                children: LINE(row, rows()[Math.min(selected(), rows().length - 1)] === row),
+                fg: () => (selectedRow() === row ? undefined : muted()),
+                children: () => LINE(row, selectedRow() === row),
               }),
           }),
       }),
       h("text", {
-        fg: muted(),
-        children:
+        fg: () => muted(),
+        children: () =>
           view() === "catalog"
             ? "enter enable · ctrl+a adopt · ctrl+d disable · tab project · esc close"
             : "enter enable · ctrl+u update · ctrl+d enable/disable · ctrl+x delete · tab catalog · esc close",
       }),
       h("text", {
-        fg: muted(),
-        children: `${rows().length} item(s) · ${props.directory}`,
+        fg: () => muted(),
+        children: () => `${rows().length} item(s) · ${props.directory}`,
       }),
     ],
   });
