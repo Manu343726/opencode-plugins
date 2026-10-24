@@ -67,10 +67,15 @@ function registerAgent(
       // the defaults plus its rules, which is why the same file on disk keeps its
       // tools. Measured: an agent created with no permissions at all could call
       // the tool, the library's verifier could not.
-      const defaults = (Agent.Info as unknown as {
-        default: (id: string) => { permissions?: unknown };
-      }).default(id).permissions;
-      const base = Array.isArray(defaults) ? (defaults as unknown[]) : [];
+      let base: unknown[] = [];
+      try {
+        const created = (Agent.Info as unknown as {
+          default: (id: string) => { permissions?: unknown };
+        }).default(id);
+        if (Array.isArray(created.permissions)) base = created.permissions as unknown[];
+      } catch (error) {
+        console.warn(`[git-skills] could not read the default permissions for ${id}: ${String(error)}`);
+      }
       const existing = Array.isArray(agent.permissions) ? (agent.permissions as unknown[]) : [];
       const seeded = existing.length > 0 ? existing : base;
       agent.permissions = [...seeded, ...fields.permissions] as never;
