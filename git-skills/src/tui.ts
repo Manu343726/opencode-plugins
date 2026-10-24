@@ -9,7 +9,15 @@
 
 import { Plugin } from "@opencode/plugin/tui";
 
-import { adoptEntry, listAdopted, removeAdopted, remoteDigest, snapshot, STATE_LABEL } from "./adopt.ts";
+import {
+  adoptEntry,
+  existingDefinition,
+  listAdopted,
+  removeAdopted,
+  remoteDigest,
+  snapshot,
+  STATE_LABEL,
+} from "./adopt.ts";
 import { addToList, readConfig, readLists, removeFromList, writeConfig } from "./config.ts";
 import { discover, findEntry, type Entry } from "./discover.ts";
 import { ensureCheckout } from "./git.ts";
@@ -157,6 +165,18 @@ export default Plugin.define({
         if ((action === "adopt" || action === "update") && (!repository || !entry)) {
           toast("The entry is not in the repository any more", "error");
           return;
+        }
+
+        if (action === "adopt" && !choice.adopted) {
+          // A hand-written definition is the project's own: adopting would
+          // overwrite it with a copy of the repository's version. The server
+          // half already prefers the local file; this is the same rule at the
+          // point where a file would be written.
+          const conflict = await existingDefinition(projectDir(), choice.kind, choice.id);
+          if (conflict) {
+            toast(`${choice.kind} ${choice.id} already exists here, and was not adopted: ${conflict}`, "error");
+            return;
+          }
         }
 
         if (action === "adopt" || action === "update") {

@@ -10,6 +10,7 @@
  */
 
 import * as fs from "node:fs/promises";
+import * as os from "node:os";
 import * as path from "node:path";
 import { applyEdits, modify, parse, type ParseError, printParseErrorCode } from "jsonc-parser";
 
@@ -41,10 +42,39 @@ const CANDIDATES = [
   "opencode.json",
 ];
 
-/** The configuration file the project owns, preferring the `.opencode` one. */
+/** Where the machine's own configuration lives. */
+export function globalConfigDir(): string {
+  const override = process.env.OPENCODE_CONFIG_DIR;
+  if (override && override.trim() !== "") return override;
+  const xdg = process.env.XDG_CONFIG_HOME;
+  const base = xdg && xdg.trim() !== "" ? xdg : path.join(os.homedir(), ".config");
+  return path.join(base, "opencode");
+}
+
+/**
+ * The configuration file that governs a directory, preferring the project's own.
+ *
+ * A plugin installed globally — the normal case for personal plugins — has its
+ * entry in `~/.config/opencode/opencode.json(c)` and no project file at all, so
+ * falling back to the global one is what makes the browser show anything in a
+ * project that declares nothing. Measured: without the fallback, `references`
+ * answered "(no project config)" in the repository that installed the plugin
+ * globally.
+ */
 export async function findConfigFile(projectDir: string): Promise<string | undefined> {
   for (const candidate of CANDIDATES) {
     const absolute = path.join(projectDir, candidate);
+    try {
+      await fs.stat(absolute);
+      return absolute;
+    } catch {
+      // keep looking
+    }
+  }
+
+  const globalDir = globalConfigDir();
+  for (const candidate of CANDIDATES) {
+    const absolute = path.join(globalDir, candidate);
     try {
       await fs.stat(absolute);
       return absolute;

@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
   addToList,
   findConfigFile,
+  globalConfigDir,
   findEntries,
   readLists,
   removeFromList,
@@ -108,8 +109,16 @@ test("readLists reads both kinds from the project config", async () => {
 
 test("readLists tolerates a project with no config", async () => {
   const project = await tmpdir("ogs-project-");
-  const lists = await readLists(project);
-  assert.deepEqual(lists, { skills: [], agents: [], repos: [] });
+  // Isolated from this machine's own global config, which may well name the plugin.
+  const empty = await tmpdir("ogs-global-");
+  const previous = process.env.OPENCODE_CONFIG_DIR;
+  process.env.OPENCODE_CONFIG_DIR = empty;
+  try {
+    assert.deepEqual(await readLists(project), { skills: [], agents: [], repos: [] });
+  } finally {
+    if (previous === undefined) delete process.env.OPENCODE_CONFIG_DIR;
+    else process.env.OPENCODE_CONFIG_DIR = previous;
+  }
 });
 
 test("the .opencode config is preferred over the root one", async () => {
@@ -166,4 +175,39 @@ test("a bundled installation with no object yet gets one", () => {
   const next = addToList(text, "repos", "https://h/x.git");
   const parsed = parseJsonc(next) as { plugins: Array<{ options: Record<string, unknown> }> };
   assert.deepEqual((parsed.plugins[0]?.options["git-skills"] as Record<string, unknown>).repos, ["https://h/x.git"]);
+});
+
+test("a globally installed plugin is found when the project declares nothing", async () => {
+  const project = await tmpdir("ogs-project-");
+  const global = await tmpdir("ogs-global-");
+  await writeFiles(global, { "opencode.jsonc": BUNDLED });
+
+  const previous = process.env.OPENCODE_CONFIG_DIR;
+  process.env.OPENCODE_CONFIG_DIR = global;
+  try {
+    const file = await findConfigFile(project);
+    assert.match(file ?? "", /opencode\.jsonc$/);
+    const lists = await readLists(project);
+    assert.deepEqual(lists.skills, ["a@https://h/x.git"]);
+  } finally {
+    if (previous === undefined) delete process.env.OPENCODE_CONFIG_DIR;
+    else process.env.OPENCODE_CONFIG_DIR = previous;
+  }
+});
+
+test("the project's own config wins over the global one", async () => {
+  const project = await tmpdir("ogs-project-");
+  const global = await tmpdir("ogs-global-");
+  await writeFiles(global, { "opencode.jsonc": BUNDLED });
+  await writeFiles(project, { "opencode.jsonc": addToList(BASE, "skills", "local@https://h/y.git") });
+
+  const previous = process.env.OPENCODE_CONFIG_DIR;
+  process.env.OPENCODE_CONFIG_DIR = global;
+  try {
+    const lists = await readLists(project);
+    assert.deepEqual(lists.skills, ["local@https://h/y.git"]);
+  } finally {
+    if (previous === undefined) delete process.env.OPENCODE_CONFIG_DIR;
+    else process.env.OPENCODE_CONFIG_DIR = previous;
+  }
 });
