@@ -8,7 +8,7 @@
  */
 
 import { jsx } from "@opentui/solid/jsx-runtime";
-import { For, Show, createMemo, createSignal, onCleanup } from "solid-js";
+import { createMemo, createSignal, onCleanup } from "solid-js";
 
 import { Plugin, usePlugin } from "@opencode/plugin/tui";
 
@@ -119,53 +119,54 @@ function SidebarBody(props: { sessionID: string; ttlMs: number }) {
 
   const running = createMemo(() => rows().filter((row) => row.running).length);
 
+  /**
+   * The whole body is one binding.
+   *
+   * `Show` + `For` inside a slot did not draw their children here — the header
+   * updated and the list stayed empty — so the body is rebuilt from the rows
+   * whenever they change. One binding, one place to be wrong.
+   */
+  const body = (): unknown[] => {
+    const list = rows();
+    const header = h("text", {
+      fg: muted(),
+      children:
+        list.length === 0
+          ? "Subagents · none"
+          : `Subagents · ${list.filter((row) => row.running).length} running · ${list.length}`,
+    });
+
+    const items = list.map((row) =>
+      h("box", {
+        flexDirection: "column",
+        children: [
+          h("box", {
+            flexDirection: "row",
+            gap: 1,
+            children: [
+              h("text", {
+                fg: markerColor(statusKind(row.running, outcomes.get(row.id))),
+                children: row.running ? "●" : "○",
+              }),
+              h("text", { fg: colorOf(row.agent), children: shorten(row.agent, 14) }),
+              h("text", {
+                fg: muted(),
+                children: row.running ? elapsed(row.created, tick()) : "done",
+              }),
+            ],
+          }),
+          h("text", { fg: muted(), children: `  ${shorten(row.title, 34)}` }),
+        ],
+      }),
+    );
+
+    return [header, ...items];
+  };
+
   return h("box", {
     flexDirection: "column",
     paddingTop: 1,
-    children: [
-      h("text", {
-        fg: () => muted(),
-        children: () =>
-          rows().length === 0
-            ? "Subagents · none"
-            : `Subagents · ${running()} running · ${rows().length}`,
-      }),
-      h(Show, {
-        when: () => rows().length > 0,
-        children: () =>
-          h(For, {
-            each: () => rows(),
-            children: (row: Row) =>
-              h("box", {
-                flexDirection: "column",
-                children: [
-                  h("box", {
-                    flexDirection: "row",
-                    gap: 1,
-                    children: [
-                      h("text", {
-                        fg: () => markerColor(statusKind(row.running, outcomes.get(row.id))),
-                        children: () => (row.running ? "●" : "○"),
-                      }),
-                      h("text", {
-                        fg: () => colorOf(row.agent),
-                        children: () => shorten(row.agent, 14),
-                      }),
-                      h("text", {
-                        fg: () => muted(),
-                        children: () => (row.running ? elapsed(row.created, tick()) : "done"),
-                      }),
-                    ],
-                  }),
-                  h("text", {
-                    fg: () => muted(),
-                    children: () => `  ${shorten(row.title, 34)}`,
-                  }),
-                ],
-              }),
-          }),
-      }),
-    ],
+    children: () => body(),
   });
 }
 
