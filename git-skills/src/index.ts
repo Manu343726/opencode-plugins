@@ -178,12 +178,12 @@ export default Plugin.define({
       }
     });
 
-    console.warn(`[git-skills] registering tool after ${skills.length} skill(s), ${agents.length} agent(s)`);
     const toolRegistration = await ctx.tool.transform((editor) => {
       editor.add({
         name: "git_skills",
         description:
           "Report the skills and agents this project loads from git repositories, and the state of the ones adopted into the project",
+        options: { codemode: true },
         input: {
           type: "object",
           properties: {
