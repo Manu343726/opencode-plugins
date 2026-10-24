@@ -7,8 +7,6 @@
  * The panel version needed all three and the user still had to know it existed.
  */
 
-import * as fs from "node:fs";
-
 import { jsx } from "@opentui/solid/jsx-runtime";
 import { createMemo, createSignal, onCleanup } from "solid-js";
 
@@ -26,6 +24,25 @@ const h = jsx as unknown as (type: unknown, props?: Record<string, unknown>) => 
 
 const text = (content: string, attributes?: Record<string, unknown>) =>
   h("text", { ...attributes, children: content });
+
+/**
+ * How each subagent ended, and when a finished one was first seen.
+ *
+ * Module level on purpose: the slot re-creates the component whenever its props
+ * change, so a map held in the component starts empty on every repaint and the
+ * outcome — recorded by an event that has already been delivered — is lost. That
+ * is why a finished subagent showed 'done' with no colour.
+ */
+const OUTCOMES = new Map<string, Outcome>();
+const SEEN_FINISHED = new Map<string, number>();
+
+const RESULT_LABEL: Record<string, string> = {
+  running: "running",
+  ok: "ok",
+  error: "error",
+  aborted: "aborted",
+  unknown: "done",
+};
 
 /** How long a finished subagent stays in the list. */
 function finishedTtlMs(context: { options?: Record<string, unknown> }): number {
@@ -95,16 +112,13 @@ function SidebarBody(props: { sessionID: string; ttlMs: number }) {
   // How each subagent ended, from the session events that say so. The session
   // itself only reports idle/running, so without this a finished subagent cannot
   // tell success from failure from an interruption.
-  const outcomes = new Map<string, Outcome>();
+  const outcomes = OUTCOMES;
   const sessionOf = (event: unknown): string | undefined => {
     const record = event as { durable?: { aggregateID?: string }; sessionID?: string } | undefined;
     return record?.durable?.aggregateID ?? record?.sessionID;
   };
 
   const stop = context.data.listen(({ details }) => {
-    try {
-      fs.appendFileSync("/tmp/opencode/events.log", `${Date.now()} ${details.type} id=${JSON.stringify((details as { durable?: { aggregateID?: string } }).durable?.aggregateID ?? null)}\n`);
-    } catch {}
     const id = sessionOf(details);
     switch (details.type) {
       case "session.execution.succeeded":
@@ -131,7 +145,7 @@ function SidebarBody(props: { sessionID: string; ttlMs: number }) {
   const timer = setInterval(() => setTick(Date.now()), 30_000);
   onCleanup(() => clearInterval(timer));
 
-  const seenFinished = new Map<string, number>();
+  const seenFinished = SEEN_FINISHED;
 
   /**
    * The marker's colour: blue while it runs, green when it succeeded, red when
@@ -198,7 +212,9 @@ function SidebarBody(props: { sessionID: string; ttlMs: number }) {
               h("text", { fg: colorOf(row.agent), children: shorten(row.agent, 14) }),
               h("text", {
                 fg: markerColor(statusKind(row.running, outcomes.get(row.id))),
-                children: row.running ? elapsed(row.created, tick()) : "done",
+                children: row.running
+                  ? elapsed(row.created, tick())
+                  : RESULT_LABEL[statusKind(false, outcomes.get(row.id))] ?? "done",
               }),
             ],
           }),
