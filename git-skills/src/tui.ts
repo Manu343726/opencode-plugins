@@ -208,6 +208,18 @@ function Browser(props: { context: Context; directory: string; done: () => void 
     setFailure(undefined);
     try {
       const loaded = await load(props.directory);
+      console.warn(
+        "[git-skills-tui] loaded",
+        JSON.stringify({
+          files: loaded.lists.files,
+          skills: loaded.lists.skills.length,
+          agents: loaded.lists.agents.length,
+          repos: loaded.lists.repos.length,
+          scans: loaded.scans.length,
+          entries: loaded.scans.reduce((total, scan) => total + scan.entries.length, 0),
+          warnings: loaded.warnings,
+        }),
+      );
       setData(loaded);
       // The project view is the expensive one; a failure there must not hide
       // the catalog, so it is reported beside it rather than replacing it.
