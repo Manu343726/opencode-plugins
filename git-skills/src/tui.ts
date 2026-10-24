@@ -195,16 +195,26 @@ function Browser(props: { context: Context; directory: string; done: () => void 
   const [data, setData] = createSignal<Data | undefined>(undefined);
   const [project, setProject] = createSignal<Row[]>([]);
   const [busy, setBusy] = createSignal(true);
+  const [failure, setFailure] = createSignal<string | undefined>(undefined);
 
   const reload = async (): Promise<void> => {
     setBusy(true);
+    setFailure(undefined);
     try {
       const loaded = await load(props.directory);
       setData(loaded);
-      setProject(await projectRows(loaded, props.directory));
-    } catch {
+      // The project view is the expensive one; a failure there must not hide
+      // the catalog, so it is reported beside it rather than replacing it.
+      try {
+        setProject(await projectRows(loaded, props.directory));
+      } catch (error) {
+        setProject([]);
+        setFailure(`project view: ${String(error)}`);
+      }
+    } catch (error) {
       setData(undefined);
       setProject([]);
+      setFailure(String(error));
     } finally {
       setBusy(false);
     }
@@ -453,7 +463,8 @@ function Browser(props: { context: Context; directory: string; done: () => void 
         fallback: () =>
           h("text", {
             fg: () => muted(),
-            children: () => (busy() ? "Loading…" : "Nothing matches."),
+            children: () =>
+              busy() ? "Loading…" : (failure() ?? "Nothing matches."),
           }),
         children: () =>
           h(For, {
