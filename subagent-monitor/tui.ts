@@ -194,7 +194,7 @@ function SidebarBody(props: { sessionID: string; ttlMs: number }) {
       children:
         list.length === 0
           ? "Subagents · none"
-          : `Subagents · ${list.filter((row) => row.running).length} running · ${list.length}`,
+          : `Subagents · ${list.filter((row) => row.running).length} running · ${list.length} total`,
     });
 
     const items = list.map((row) =>
