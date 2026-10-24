@@ -15,7 +15,7 @@
  * are never registered, so an id has exactly one definition in a session.
  */
 
-import { Plugin, Skill } from "@opencode/plugin";
+import { Agent, Plugin, Skill } from "@opencode/plugin";
 import { fileURLToPath } from "node:url";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
@@ -58,14 +58,22 @@ function registerAgent(
     if (fields.color !== undefined) agent.color = fields.color;
     if (fields.steps !== undefined) agent.steps = fields.steps;
     if (fields.permissions !== undefined) {
-      // **Appended**, not replaced. An agent created from defaults carries a
-      // catch-all allow; assigning the file's rules over it would drop that and
-      // leave every action the file does not name denied — which hides the
-      // plugin's own tool from the agent. The host appends the rules of a
-      // Markdown agent to the same defaults, which is why the identical file on
-      // disk keeps its tools.
+      // **Seeded with the defaults, then appended.**
+      //
+      // An agent created by `editor.update` on a missing id starts with no
+      // permission rules at all, and the defaults carry a catch-all allow. Setting
+      // only the file's rules leaves every action the file does not name denied —
+      // which hides the plugin's own tool from the agent. A Markdown agent gets
+      // the defaults plus its rules, which is why the same file on disk keeps its
+      // tools. Measured: an agent created with no permissions at all could call
+      // the tool, the library's verifier could not.
+      const defaults = (Agent.Info as unknown as {
+        default: (id: string) => { permissions?: unknown };
+      }).default(id).permissions;
+      const base = Array.isArray(defaults) ? (defaults as unknown[]) : [];
       const existing = Array.isArray(agent.permissions) ? (agent.permissions as unknown[]) : [];
-      agent.permissions = [...existing, ...fields.permissions] as never;
+      const seeded = existing.length > 0 ? existing : base;
+      agent.permissions = [...seeded, ...fields.permissions] as never;
     }
     if (fields.model !== undefined) {
       agent.model = {
