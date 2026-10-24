@@ -182,24 +182,10 @@ Adopting refuses when the id already exists in the project as a hand-written fil
 project's, and replacing it with a copy of the repository's version would be a surprise, not a
 feature.
 
-### Loading the TUI half
+### The terminal half
 
-The `plugins` entry of `opencode.json(c)` loads the **server** half only. The CLI reconciles just
-two directories — `~/.config/opencode/plugins` and `<project>/.opencode/plugins` — so a package's
-`tui.ts` is never picked up from a `plugins` entry (measured: the CLI log names exactly those two
-directories, and no `tui.ts` appears at any log level).
-
-Add a one-line loader to the project:
-
-```ts
-// .opencode/plugins/git-skills.ts
-export { default } from "/path/to/opencode-git-skills/tui.ts"
-```
-
-That file is discovered by **both** runners, and only the CLI has a terminal, so the TUI half
-stands down when `context.keymap` is absent — otherwise the server load fails with
-`undefined is not an object (evaluating 'context.keymap.layer')` and the session shows a plugin
-failure. The guard is in `tui.ts`, so this is handled rather than something to work around.
+Declaring the plugin is enough: OpenCode loads `exports["./tui"]` from the package alongside the
+server entrypoint, so `/git-skills` is available without any extra file.
 
 ## Measured constraints
 

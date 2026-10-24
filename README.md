@@ -17,16 +17,17 @@ reaches the others.
 
 ## Panels and the terminal half
 
-A plugin's `tui.ts` is not loaded from the `plugins` entry: the CLI reconciles its own plugin
-directories, so a project that wants panels re-exports the bundle from its plugins directory:
+Nothing extra to do: declaring the package is enough for both halves. OpenCode loads the server
+entrypoint from `<package>/index.ts` and the terminal one from `exports["./tui"]` in the package's
+`package.json`, so `/git-skills` and the sidebar appear as soon as a project lists the plugin.
 
-```ts
-// .opencode/plugins/opencode-plugins-tui.ts
-export { default } from "/path/to/opencode-plugins/tui.ts"
+```jsonc
+"exports": { ".": "./index.ts", "./tui": "./tui.ts" }
 ```
 
-That file is discovered by the server runner too, where there is no terminal; the TUI halves stand
-down when `context.keymap` is absent, so the session does not report a plugin failure.
+That map is the contract: an earlier version of this README told projects to re-export the bundle
+from `.opencode/plugins/` because a measurement had been taken before the package shipped `tui.ts`.
+It is not needed, and the section that said so was wrong.
 
 ## Consuming a plugin
 
