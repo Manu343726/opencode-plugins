@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { collect, elapsed, prune, summary, type SessionsLike } from "../collect.ts";
+import { collect, elapsed, prune, statusKind, summary, type SessionsLike } from "../collect.ts";
 
 function fake(children: Array<[string, string, "idle" | "running", number]>): SessionsLike {
   const byId = new Map(children.map(([id, agent, status, created]) => [id, { agent, status, created }]));
@@ -137,4 +137,12 @@ test("the session's own updated time is the fallback when it was already finishe
   assert.equal(justAfter.rows.length, 1);
   const longAfter = prune(rows, { now: 700_001, ttlMs: 300_000, seenFinished: seen });
   assert.equal(longAfter.rows.length, 0);
+});
+
+test("the status marker follows the outcome, and running wins", () => {
+  assert.equal(statusKind(true, "error"), "running");
+  assert.equal(statusKind(false, "ok"), "ok");
+  assert.equal(statusKind(false, "error"), "error");
+  assert.equal(statusKind(false, "aborted"), "aborted");
+  assert.equal(statusKind(false, undefined), "unknown");
 });

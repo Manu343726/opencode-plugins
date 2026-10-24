@@ -12,7 +12,7 @@ import { For, Show, createMemo, createSignal, onCleanup } from "solid-js";
 
 import { Plugin, usePlugin } from "@opencode/plugin/tui";
 
-import { collect, elapsed, prune, type Row } from "./collect.ts";
+import { collect, elapsed, prune, statusKind, type Outcome, type Row } from "./collect.ts";
 
 /** Keeps a title short enough for a narrow sidebar. */
 function shorten(value: string, max: number): string {
@@ -35,8 +35,45 @@ function finishedTtlMs(context: { options?: Record<string, unknown> }): number {
 function SidebarBody(props: { sessionID: string; ttlMs: number }) {
   const context = usePlugin();
 
+  // The agent's own colour, the one OpenCode uses for it in its banner. The
+  // session only names the agent, so the definition is looked up by id; an
+  // agent with no colour, or one that is not in the list, keeps the default.
+  void context.data.location.agent.sync(context.location).catch(() => undefined);
+  const colorOf = (agentID: string): string | undefined => {
+    const agents = context.data.location.agent.list(context.location) ?? [];
+    const found = agents.find((agent) => agent.id === agentID);
+    return found?.color;
+  };
+
   const [tick, setTick] = createSignal(Date.now());
+
+  // How each subagent ended, from the session events that say so. The session
+  // itself only reports idle/running, so without this a finished subagent cannot
+  // tell success from failure from an interruption.
+  const outcomes = new Map<string, Outcome>();
+  const sessionOf = (event: unknown): string | undefined => {
+    const record = event as { durable?: { aggregateID?: string }; sessionID?: string } | undefined;
+    return record?.durable?.aggregateID ?? record?.sessionID;
+  };
+
   const stop = context.data.listen(({ details }) => {
+    const id = sessionOf(details);
+    switch (details.type) {
+      case "session.execution.succeeded":
+        if (id) outcomes.set(id, "ok");
+        break;
+      case "session.execution.failed":
+        if (id) outcomes.set(id, "error");
+        break;
+      case "session.execution.interrupted":
+        if (id) outcomes.set(id, "aborted");
+        break;
+      case "session.execution.started":
+        if (id) outcomes.delete(id);
+        break;
+      default:
+        break;
+    }
     if (details.type.startsWith("session.")) setTick(Date.now());
   });
   onCleanup(stop);
@@ -47,6 +84,27 @@ function SidebarBody(props: { sessionID: string; ttlMs: number }) {
   onCleanup(() => clearInterval(timer));
 
   const seenFinished = new Map<string, number>();
+
+  /**
+   * The marker's colour: blue while it runs, green when it succeeded, red when
+   * it failed, orange when it was interrupted. A session that is idle without a
+   * seen ending stays uncoloured rather than claiming an outcome.
+   */
+  const markerColor = (kind: ReturnType<typeof statusKind>): string | undefined => {
+    const text = context.theme?.text;
+    switch (kind) {
+      case "running":
+        return text?.info ?? text?.accent;
+      case "ok":
+        return text?.success;
+      case "error":
+        return text?.error;
+      case "aborted":
+        return text?.warning;
+      default:
+        return text?.muted;
+    }
+  };
 
   const rows = createMemo<Row[]>(() => {
     const now = tick();
@@ -82,9 +140,9 @@ function SidebarBody(props: { sessionID: string; ttlMs: number }) {
                     gap: 1,
                     children: [
                       text(row.running ? "●" : "○", {
-                        fg: row.running ? context.theme?.text?.success : context.theme?.text?.muted,
+                        fg: markerColor(statusKind(row.running, outcomes.get(row.id))),
                       }),
-                      text(shorten(row.agent, 14)),
+                      text(shorten(row.agent, 14), { fg: colorOf(row.agent) }),
                       text(row.running ? elapsed(row.created, tick()) : "done", {
                         fg: context.theme?.text?.muted,
                       }),

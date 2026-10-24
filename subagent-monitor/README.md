@@ -19,9 +19,17 @@ Nothing to open: it is part of the sidebar, next to the session, the way
 
 ```
 Subagents · 1 running · 1
-● general  44s
-○ explore  done
+● general              44s
+  Sleep 90 then report
+○ explore              done
+  Summarise the changelog
 ```
+
+Each entry names the agent — in the colour its own definition gives it, the one OpenCode uses in
+its banner — and the task’s title under it. The marker carries the outcome: **blue** while running,
+**green** when it succeeded, **red** when it failed, **orange** when it was interrupted, and the
+default colour when the widget mounted after it had already finished and there is no outcome to
+report.
 
 A finished subagent disappears **five minutes** after it ended — long enough to notice it
 finished, short enough that the list does not become a history of the session. The delay is the

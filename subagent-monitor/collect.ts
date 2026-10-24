@@ -142,3 +142,20 @@ export function prune(rows: readonly Row[], options: PruneOptions): Pruned {
 
   return { rows: kept, removed };
 }
+/** How a subagent ended, as far as the session events told us. */
+export type Outcome = "ok" | "error" | "aborted";
+
+export type StatusKind = "running" | "ok" | "error" | "aborted" | "unknown";
+
+/**
+ * What the status marker means.
+ *
+ * Running wins over everything: a session that is executing again after a
+ * failure is running, not failed. `unknown` is a session that is idle and whose
+ * ending this monitor never saw — it was already finished when the widget
+ * mounted — and it is shown without claiming an outcome it cannot know.
+ */
+export function statusKind(running: boolean, outcome?: Outcome): StatusKind {
+  if (running) return "running";
+  return outcome ?? "unknown";
+}
