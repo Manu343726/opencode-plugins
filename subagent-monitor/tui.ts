@@ -7,8 +7,6 @@
  * The panel version needed all three and the user still had to know it existed.
  */
 
-import * as fs from "node:fs";
-
 import { jsx } from "@opentui/solid/jsx-runtime";
 import { createMemo, createSignal, onCleanup } from "solid-js";
 
@@ -67,8 +65,16 @@ function SidebarBody(props: { sessionID: string; ttlMs: number }) {
    * attempt used `text.info`, `text.success` and friends, which do not exist and
    * resolved to nothing — the sidebar stayed grey.
    */
+  const FALLBACK: Record<"success" | "warning" | "error" | "info", string> = {
+    info: "#5ab6c2",
+    success: "#7fd88f",
+    error: "#f7768e",
+    warning: "#e0af68",
+  };
+
   const feedback = (kind: "success" | "warning" | "error" | "info"): unknown =>
-    (context.theme?.text?.feedback as Record<string, { base?: unknown }> | undefined)?.[kind]?.base;
+    (context.theme?.text?.feedback as Record<string, { base?: unknown }> | undefined)?.[kind]?.base ??
+    FALLBACK[kind];
 
   /**
    * A stable colour derived from the id, for the agents that declare none.
@@ -121,11 +127,6 @@ function SidebarBody(props: { sessionID: string; ttlMs: number }) {
   };
 
   const stop = context.data.listen(({ details }) => {
-    if (details.type.startsWith("session.execution.")) {
-      try {
-        fs.appendFileSync("/tmp/opencode/exec.log", `${details.type} ${JSON.stringify(details).slice(0, 500)}\n`);
-      } catch {}
-    }
     const id = sessionOf(details);
     switch (details.type) {
       case "session.execution.succeeded":
