@@ -19,9 +19,13 @@ A reference is `<id>@<git-url>[:<ref>]`:
   `ssh://git@forgejo:2222/…`; the HTTPS url redirects to a login page and the clone fails.
 
 What a project sees is the **sum** of two configurations: the machine's
-(`~/.config/opencode/opencode.jsonc`) and the project's own (`.opencode/opencode.jsonc`). The
-project's entries come last and win, so a project can turn off something the machine enables by
-writing only the override.
+(`~/.config/opencode/opencode.jsonc`) and the project's own (`opencode.jsonc` or
+`.opencode/opencode.jsonc` in the project's directory). The project's entries come last and win, so
+a project can turn off something the machine enables by writing only the override.
+
+Content is **not** inherited from parent directories: a configuration in a directory above the
+project is ignored. On this machine `$HOME` is itself a repository, and a configuration at its root
+would otherwise appear in every project under it.
 
 An item is a plain string while it is enabled, and an object once it is not:
 

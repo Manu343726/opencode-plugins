@@ -25,7 +25,7 @@ import { parseAgent, parseSkillMeta } from "./agentfile.ts";
 import { splitFrontmatter } from "./provenance.ts";
 import { listAdopted, snapshot, STATE_LABEL } from "./adopt.ts";
 import { readOptions, resolve, summarize, type Resolution } from "./resolve.ts";
-import { mergeItems, readLists } from "./config.ts";
+import { readLists } from "./config.ts";
 
 /**
  * Applies a branded-string schema when the runtime provides one, and falls
@@ -77,21 +77,26 @@ export default Plugin.define({
 
     for (const problem of optionProblems) console.warn(`[git-skills] ${problem}`);
 
-    // What a project sees is the sum of the machine's configuration and its
-    // own: the plugin instance only receives the options of the entry that
-    // loaded it, so the other one is read from disk. The project's entries come
-    // last and therefore win, which is the only way to turn off, in one
-    // project, something declared for all of them.
+    // What a project uses is read from **its own** file plus the machine's, and
+    // from nowhere else.
+    //
+    // The options OpenCode hands the plugin are the configuration merged from
+    // every ancestor directory, which here means that a configuration at the
+    // root of `$HOME` would leak into every project under it. Content is not
+    // inherited from parents: a project declares what it uses.
     const lists = await readLists(projectDir);
     for (const problem of lists.problems) console.warn(`[git-skills] ${problem}`);
 
     let resolution: Resolution;
     try {
       resolution = await resolve(projectDir, {
-        ...options,
-        skills: mergeItems([options.skills ?? [], lists.skills]),
-        agents: mergeItems([options.agents ?? [], lists.agents]),
-        repos: [...new Set([...(options.repos ?? []), ...lists.repos])],
+        // Scalars still come from the entry: they are settings, not content.
+        cacheDir: options.cacheDir,
+        ttlMinutes: options.ttlMinutes,
+        offline: options.offline,
+        skills: lists.skills,
+        agents: lists.agents,
+        repos: lists.repos,
         globalConfigDir: options.globalConfigDir ?? path.join(os.homedir(), ".config", "opencode"),
       });
     } catch (error) {

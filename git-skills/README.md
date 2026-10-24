@@ -97,7 +97,12 @@ project gets; the project's adds what is dedicated to it.
 
 The plugin reads both from disk and merges them by reference, because a plugin instance only
 receives the options of the entry that loaded it. The project's entries come last and therefore
-win, which is the only way for one project to turn off something declared for all of them:
+win, which is the only way for one project to turn off something declared for all of them.
+
+**Content is not inherited from parent directories.** OpenCode merges the configuration of every
+ancestor, so on a machine whose `$HOME` is itself a repository — this one — a configuration at the
+root would otherwise leak into every project under it. The plugin reads the project's own file and
+the machine's, and nothing in between: a project declares what it uses.
 
 ```jsonc
 // global
