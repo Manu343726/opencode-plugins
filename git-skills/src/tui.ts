@@ -441,8 +441,7 @@ function Browser(props: { context: Context; directory: string; done: () => void 
       }),
       h("input", {
         focused: true,
-        placeholder: () =>
-          view() === "catalog" ? "Search every known repository" : "Search what this project uses",
+        placeholder: "Search",
         onInput: (value: string) => {
           setQuery(value);
           setSelected(0);

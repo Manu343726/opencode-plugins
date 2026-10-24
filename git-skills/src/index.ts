@@ -16,11 +16,13 @@
  */
 
 import { Plugin, Skill } from "@opencode/plugin";
+import { fileURLToPath } from "node:url";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 
 import { parseAgent, parseSkillMeta } from "./agentfile.ts";
+import { splitFrontmatter } from "./provenance.ts";
 import { listAdopted, snapshot, STATE_LABEL } from "./adopt.ts";
 import { readOptions, resolve, summarize, type Resolution } from "./resolve.ts";
 import { mergeItems, readLists } from "./config.ts";
@@ -106,7 +108,37 @@ export default Plugin.define({
     const skills = resolution.entries.filter((entry) => entry.entry.kind === "skill");
     const agents = resolution.entries.filter((entry) => entry.entry.kind === "agent");
 
+    // The plugin's own skill: what it is, what the tool answers, and the patterns
+    // that keep an agent from guessing. It ships beside the code, so the text an
+    // agent reads is the text of the version that is loaded. Read before the
+    // transform, which must be synchronous.
+    const guideFile = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "SKILL.md");
+    let guide: { description: string; body: string } | undefined;
+    try {
+      const text = await fs.readFile(guideFile, "utf8");
+      const meta = splitFrontmatter(text);
+      guide = {
+        description:
+          typeof meta.data.description === "string"
+            ? meta.data.description
+            : "How this project gets skills and agents from git repositories",
+        body: meta.body,
+      };
+    } catch (error) {
+      console.warn(`[git-skills] could not load its own skill from ${guideFile}: ${String(error)}`);
+    }
+
     const skillRegistration = await ctx.skill.transform((editor) => {
+      if (guide && editor.get("git-skills") === undefined) {
+        editor.add({
+          id: branded("git-skills", Skill.ID) as never,
+          name: branded("Git skills and agents", Skill.Name) as never,
+          description: guide.description,
+          path: branded(guideFile, (Skill.Info as unknown as { fields: { path: unknown } }).fields.path) as never,
+          content: guide.body,
+        });
+      }
+
       for (const resolved of skills) {
         const id = resolved.spec.id;
         if (editor.get(id) !== undefined) continue;
