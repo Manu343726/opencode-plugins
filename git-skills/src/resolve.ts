@@ -23,6 +23,10 @@ export interface Options {
   readonly ttlMinutes?: number;
   readonly offline?: boolean;
   readonly globalConfigDir?: string;
+  /** Web root of the forge, for the compare URL and the pull request API. */
+  readonly apiBase?: string;
+  /** Token for the forge API; without it a proposal pushes a branch only. */
+  readonly token?: string;
 }
 
 export interface Repository {
@@ -85,6 +89,9 @@ export function readOptions(raw: Readonly<Record<string, unknown>>): {
   if (ttl !== undefined && typeof ttl !== "number") {
     problems.push("options.ttlMinutes must be a number");
   }
+  if (raw.apiBase !== undefined && typeof raw.apiBase !== "string") {
+    problems.push("options.apiBase must be a string");
+  }
   return {
     options: {
       skills: parsed(raw.skills, "skills", problems),
@@ -94,6 +101,11 @@ export function readOptions(raw: Readonly<Record<string, unknown>>): {
       ttlMinutes: typeof ttl === "number" ? ttl : undefined,
       offline: raw.offline === true,
       globalConfigDir: typeof raw.globalConfigDir === "string" ? raw.globalConfigDir : undefined,
+      apiBase: typeof raw.apiBase === "string" ? raw.apiBase : undefined,
+      token:
+        typeof raw.token === "string" && raw.token !== ""
+          ? raw.token
+          : (process.env.GIT_SKILLS_TOKEN ?? process.env.FORGEJO_TOKEN),
     },
     problems,
   };

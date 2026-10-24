@@ -47,6 +47,7 @@ A disabled reference stays in the configuration and is not loaded.
 | `status` | what is loaded right now, the commit each entry came from, and everything skipped and why |
 | `references` | what the configuration declares, and which file it was read from |
 | `adopted` | the copies the project owns, and whether each drifted from its repository |
+| `propose` | pushes the local changes of every drifted copy to a branch of its repository, and opens a pull request for each |
 
 Use `status` before claiming a skill or agent is available: the session's own list is the truth, and
 an entry can be skipped because the project already defines it by hand, or because it is disabled.

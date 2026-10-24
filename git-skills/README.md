@@ -187,6 +187,35 @@ Adopting refuses when the id already exists in the project as a hand-written fil
 project's, and replacing it with a copy of the repository's version would be a surprise, not a
 feature.
 
+## Proposing a change back
+
+An adopted copy can be edited like any file, and those edits can go back to the repository they came
+from. **`ctrl+p`** on a row of the Project tab asks for a pull request title and then:
+
+1. clones — or refreshes — the source repository at the ref the copy was adopted from;
+2. creates a branch `propose/<kind>-<id>-<timestamp>` from that commit;
+3. copies the adopted files over the entry, commits with the title and a body carrying the diff,
+   the file list and the provenance;
+4. pushes the branch through the checkout's own remote, so it uses whatever credentials the machine
+   already uses to reach that repository;
+5. opens the pull request when the forge API and a token are configured — otherwise it returns the
+   compare URL, which is the same work minus the click.
+
+The body is composed from the change itself, never from a template that could describe something
+else: `## What changed` carries `git diff --stat`, then the files, then an optional `## Details`, and
+`## Where it came from` names the reference the copy was adopted from.
+
+| Option | Meaning |
+|---|---|
+| `apiBase` | Web root of the forge, e.g. `https://git.example.com`. Needed for the compare URL and the pull request API; derivable from an `https://` clone URL, not from an SSH one. |
+| `token` | Forge API token. Also read from `GIT_SKILLS_TOKEN`, then `FORGEJO_TOKEN`. Without it the branch is pushed and no pull request is opened. |
+
+The agent side has the same power through the tool: `git_skills({ action: "propose" })` proposes every
+adopted copy with local changes, one pull request each.
+
+The adopted copy is never rewritten by proposing: the project keeps its version, and the provenance
+keeps recording the commit it was taken from.
+
 ### The terminal half
 
 Declaring the plugin is enough: OpenCode loads `exports["./tui"]` from the package alongside the

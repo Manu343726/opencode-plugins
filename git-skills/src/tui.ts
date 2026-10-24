@@ -46,6 +46,7 @@ import {
 } from "./config.ts";
 import type { Item } from "./items.ts";
 import { discover, findEntry, type Entry } from "./discover.ts";
+import { proposeChange } from "./propose.ts";
 import { ensureCheckout } from "./git.ts";
 import { formatSpec, parseSpec, type Kind, type Spec } from "./ref.ts";
 import { Plugin } from "@opencode/plugin/tui";
@@ -188,6 +189,16 @@ export default Plugin.define({
 
     const projectDir = (): string => context.location?.directory ?? process.cwd();
 
+    // Settings, not content: where the forge lives and how to authenticate to it.
+    const settings = context.options as { apiBase?: string; token?: string };
+    const forge = {
+      apiBase: typeof settings.apiBase === "string" ? settings.apiBase : undefined,
+      token:
+        typeof settings.token === "string" && settings.token !== ""
+          ? settings.token
+          : (process.env.GIT_SKILLS_TOKEN ?? process.env.FORGEJO_TOKEN),
+    };
+
     // The same rule as the server half: the command exists where the plugin is
     // declared, not where an ancestor directory happens to declare it.
     if ((await projectDeclaresPlugin(projectDir())) === undefined) return;
@@ -271,6 +282,15 @@ export default Plugin.define({
                   title: "Delete",
                   onTrigger: (value) => void remove(decode(String(value))),
                 },
+            ...(view === "project"
+              ? [
+                  {
+                    bind: "ctrl+p",
+                    title: "Propose change",
+                    onTrigger: (value: unknown) => void propose(decode(String(value))),
+                  },
+                ]
+              : []),
             {
               // `tab` is reserved by the dialog for moving focus between its
               // actions, so it never reached this one — measured. The switch
@@ -380,6 +400,60 @@ export default Plugin.define({
       const next = removeFromList(await readConfig(file), key, reference);
       if (next !== null) await writeConfig(file, next);
       toast(`${choice.kind} ${choice.id} removed from the project`, "success");
+    }
+
+    /**
+     * Takes the adopted copy's local changes back to its repository.
+     *
+     * The dialog closes first: asking for a title replaces it, and the prompt
+     * resolves that dialog — so it is the only thing on screen while the person
+     * types.
+     */
+    async function propose(choice: Choice | undefined): Promise<void> {
+      if (!choice) return;
+      if (!choice.adopted) {
+        toast("Only an adopted copy can be proposed: there is nothing to send back");
+        return;
+      }
+
+      const item = (await listAdopted(projectDir())).find(
+        (candidate) => candidate.kind === choice.kind && candidate.id === choice.id,
+      );
+      if (!item) return;
+
+      const state = (await snapshot(item)).state;
+      if (state !== "local-changes" && state !== "both") {
+        toast(`${choice.kind} ${choice.id} has no local changes to propose`);
+        return;
+      }
+
+      context.ui.dialog.clear();
+      const title = await context.ui.dialog.prompt({
+        title: "Propose change",
+        description: `Pull request title for ${choice.kind} ${choice.id}`,
+        placeholder: "What does this change?",
+      });
+      if (title === undefined || title.trim() === "") return;
+
+      try {
+        const proposal = await proposeChange({
+          projectDir: projectDir(),
+          kind: choice.kind,
+          id: choice.id,
+          title: title.trim(),
+          apiBase: forge.apiBase,
+          token: forge.token,
+        });
+        toast(
+          proposal.pullRequestUrl
+            ? `Proposed: ${proposal.pullRequestUrl}`
+            : `Pushed ${proposal.branch}${proposal.compareUrl ? ` — open ${proposal.compareUrl}` : ""}`,
+          "success",
+        );
+        for (const warning of proposal.warnings) toast(warning, "error");
+      } catch (error) {
+        toast(String(error), "error");
+      }
     }
 
     async function adopt(choice: Choice | undefined): Promise<void> {

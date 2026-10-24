@@ -24,6 +24,7 @@ import * as path from "node:path";
 import { parseAgent, parseSkillMeta } from "./agentfile.ts";
 import { splitFrontmatter } from "./provenance.ts";
 import { listAdopted, snapshot, STATE_LABEL } from "./adopt.ts";
+import { proposeChange } from "./propose.ts";
 import { readOptions, resolve, summarize, type Resolution } from "./resolve.ts";
 import { projectDeclaresPlugin, readLists } from "./config.ts";
 
@@ -211,9 +212,9 @@ export default Plugin.define({
           properties: {
             action: {
               type: "string",
-              enum: ["status", "adopted", "references"],
+              enum: ["status", "adopted", "references", "propose"],
               description:
-                "status: what is loaded from repositories; adopted: copies in the project and whether they drifted; references: what the project config declares",
+                "status: what is loaded from repositories; adopted: copies in the project and whether they drifted; references: what the project config declares; propose: pushes the local changes of every drifted copy to its repository and opens a pull request for each",
             },
           },
           required: ["action"],
@@ -221,6 +222,44 @@ export default Plugin.define({
         },
         execute: async (input: unknown) => {
           const action = (input as { action?: string }).action ?? "status";
+          if (action === "propose") {
+            const adopted = await listAdopted(projectDir);
+            const drifted: typeof adopted = [];
+            for (const item of adopted) {
+              const state = (await snapshot(item)).state;
+              if (state === "local-changes" || state === "both") drifted.push(item);
+            }
+            if (drifted.length === 0) {
+              return { content: "No adopted entry has local changes to propose." };
+            }
+
+            const lines: string[] = [];
+            for (const item of drifted) {
+              try {
+                const proposal = await proposeChange({
+                  projectDir,
+                  kind: item.kind,
+                  id: item.id,
+                  title: `Update ${item.kind} ${item.id}`,
+                  motivation: `Proposes the local changes of \`${item.id}\` back to the repository it was adopted from.`,
+                  apiBase: options.apiBase,
+                  token: options.token,
+                });
+                lines.push(
+                  `${item.kind} ${item.id}: pushed ${proposal.branch} (${proposal.commit.slice(0, 8)})`,
+                  ...(proposal.pullRequestUrl ? [`  pull request: ${proposal.pullRequestUrl}`] : []),
+                  ...(proposal.compareUrl && !proposal.pullRequestUrl
+                    ? [`  open it: ${proposal.compareUrl}`]
+                    : []),
+                  ...proposal.warnings.map((warning) => `  note: ${warning}`),
+                );
+              } catch (error) {
+                lines.push(`${item.kind} ${item.id}: ${String(error)}`);
+              }
+            }
+            return { content: lines.join("\n") };
+          }
+
           if (action === "references") {
             const lists = await readLists(projectDir);
             const show = (items: typeof lists.skills): string =>
