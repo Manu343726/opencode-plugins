@@ -465,7 +465,6 @@ function Browser(props: {
         children: [tab("catalog", "Catalog"), tab("project", "Project")],
       }),
       h("input", {
-        focused: true,
         placeholder: "Search",
         onInput: (value: string) => {
           setQuery(value);
