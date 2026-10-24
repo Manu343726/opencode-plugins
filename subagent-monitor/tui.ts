@@ -7,6 +7,8 @@
  * The panel version needed all three and the user still had to know it existed.
  */
 
+import * as fs from "node:fs";
+
 import { jsx } from "@opentui/solid/jsx-runtime";
 import { createMemo, createSignal, onCleanup } from "solid-js";
 
@@ -49,10 +51,26 @@ function SidebarBody(props: { sessionID: string; ttlMs: number }) {
   const feedback = (kind: "success" | "warning" | "error" | "info"): unknown =>
     (context.theme?.text?.feedback as Record<string, { base?: unknown }> | undefined)?.[kind]?.base;
 
+  /**
+   * A stable colour derived from the id, for the agents that declare none.
+   *
+   * The built-in agents declare no colour at all (measured: build, general,
+   * explore and plan all report `color: null`), so using only the declared one
+   * leaves every name white and the feature invisible. A hash of the id into a
+   * fixed palette keeps the same agent the same colour between sessions and
+   * tells several agents apart.
+   */
+  const derived = (agentID: string): string => {
+    const palette = ["#7aa2f7", "#9ece6a", "#e0af68", "#bb9af7", "#7dcfff", "#f7768e", "#ff9e64"];
+    let hash = 0;
+    for (const char of agentID) hash = (hash * 31 + char.charCodeAt(0)) % 100_000;
+    return palette[hash % palette.length] ?? "#7aa2f7";
+  };
+
   const colorOf = (agentID: string): unknown => {
     const agents = context.data.location.agent.list(context.location) ?? [];
     const declared = agents.find((agent) => agent.id === agentID)?.color;
-    if (!declared) return undefined;
+    if (!declared) return derived(agentID);
     if (declared.startsWith("#")) return declared;
 
     // An agent may name a theme colour rather than give a hex value.
@@ -84,6 +102,9 @@ function SidebarBody(props: { sessionID: string; ttlMs: number }) {
   };
 
   const stop = context.data.listen(({ details }) => {
+    try {
+      fs.appendFileSync("/tmp/opencode/events.log", `${Date.now()} ${details.type} id=${JSON.stringify((details as { durable?: { aggregateID?: string } }).durable?.aggregateID ?? null)}\n`);
+    } catch {}
     const id = sessionOf(details);
     switch (details.type) {
       case "session.execution.succeeded":
@@ -176,7 +197,7 @@ function SidebarBody(props: { sessionID: string; ttlMs: number }) {
               }),
               h("text", { fg: colorOf(row.agent), children: shorten(row.agent, 14) }),
               h("text", {
-                fg: muted(),
+                fg: markerColor(statusKind(row.running, outcomes.get(row.id))),
                 children: row.running ? elapsed(row.created, tick()) : "done",
               }),
             ],
