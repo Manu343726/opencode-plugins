@@ -260,7 +260,10 @@ export default Plugin.define({
                   onTrigger: (value) => void remove(decode(String(value))),
                 },
             {
-              bind: "tab",
+              // `tab` is reserved by the dialog for moving focus between its
+              // actions, so it never reached this one — measured. The switch
+              // uses a ctrl key, like the other actions that do fire.
+              bind: "ctrl+t",
               title: tab.otherLabel,
               selection: "none",
               onTrigger: () => {
