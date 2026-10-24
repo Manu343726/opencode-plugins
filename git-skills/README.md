@@ -198,8 +198,27 @@ from. **`ctrl+p`** on a row of the Project tab asks for a pull request title and
    the file list and the provenance;
 4. pushes the branch through the checkout's own remote, so it uses whatever credentials the machine
    already uses to reach that repository;
-5. opens the pull request when the forge API and a token are configured — otherwise it returns the
-   compare URL, which is the same work minus the click.
+5. opens the change on the forge when a token is configured — otherwise it returns the compare URL
+   and says what to do with it, including which harness tool can open it.
+
+## Forges
+
+The forge is read from the clone url, and each one is called with its own shape:
+
+| Forge | Detected by | Endpoint | Header |
+|---|---|---|---|
+| **GitHub** | `github.com` | `api.github.com/repos/{o}/{r}/pulls` | `Authorization: Bearer` |
+| **GitLab** | host containing `gitlab` | `/api/v4/projects/{o%2Fr}/merge_requests` | `PRIVATE-TOKEN` |
+| **Forgejo / Gitea** | anything else, or an explicit `apiBase` | `/api/v1/repos/{o}/{r}/pulls` | `Authorization: token` |
+| **Gerrit** | host containing `gerrit`, or the SSH port `29418` | none — a change is a push to `refs/for/<branch>` | — |
+
+Gerrit is not a pull-request forge: the change **is** the commit pushed to `refs/for/`, and it needs
+a `Change-Id` trailer. The plugin adds one when the message lacks it and pushes there, instead of
+creating a branch nobody reviews.
+
+When there is no token, the branch is pushed and the result says what to do: for a Forgejo host, that
+the harness's `forgejo` MCP can open the pull request with `create_pull_request` and the head, base,
+title and body this plugin already composed.
 
 The body is composed from the change itself, never from a template that could describe something
 else: `## What changed` carries `git diff --stat`, then the files, then an optional `## Details`, and

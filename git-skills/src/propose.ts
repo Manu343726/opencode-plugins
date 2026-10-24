@@ -20,6 +20,7 @@ import { discover, findEntry } from "./discover.ts";
 import { ensureCheckout, run } from "./git.ts";
 import { readProvenance } from "./provenance.ts";
 import { parseSpec, type Kind } from "./ref.ts";
+import { changeId, detectForge, mcpHint, openChange, withChangeId, type Forge } from "./forge.ts";
 
 export interface ProposeOptions {
   readonly projectDir: string;
@@ -240,6 +241,42 @@ export async function proposeChange(options: ProposeOptions): Promise<Proposal> 
   );
   const commit = (await git(checkout.dir, "rev-parse", "HEAD")).trim();
 
+  const forge = detectForge(spec.url, options.apiBase);
+
+  // Gerrit has no branch-and-pull-request model: a change is a commit pushed to
+  // refs/for/<branch>, identified by a Change-Id trailer. Pushing a branch there
+  // would create nothing the reviewer can see.
+  if (forge.kind === "gerrit") {
+    const id = changeId(`${options.kind}-${options.id}-${commit}`);
+    const message = await git(checkout.dir, "log", "-1", "--pretty=%B");
+    await git(
+      checkout.dir,
+      "-c",
+      `user.name=${author.name}`,
+      "-c",
+      `user.email=${author.email}`,
+      "commit",
+      "--quiet",
+      "--amend",
+      "-m",
+      withChangeId(message, id),
+    );
+    const pushFor = await run("git", ["push", "origin", `HEAD:refs/for/${spec.ref}`], {
+      cwd: checkout.dir,
+      timeoutMs: 120_000,
+    });
+    if (pushFor.code !== 0) {
+      throw new ProposeError(`could not push the change for review: ${pushFor.stderr.trim()}`);
+    }
+    return {
+      branch: `refs/for/${spec.ref}`,
+      commit,
+      files: written,
+      pushed: true,
+      warnings: [`pushed to refs/for/${spec.ref} with Change-Id ${id}`],
+    };
+  }
+
   const push = await run("git", ["push", "--force", "origin", `HEAD:refs/heads/${branch}`], {
     cwd: checkout.dir,
     timeoutMs: 120_000,
@@ -250,30 +287,31 @@ export async function proposeChange(options: ProposeOptions): Promise<Proposal> 
 
   const warnings: string[] = [];
   const repository = repositoryOf(spec.url);
-  const webBase = options.apiBase ?? webBaseOf(spec.url);
   const compareUrl =
-    webBase && repository
-      ? `${webBase}/${repository.owner}/${repository.repo}/compare/${encodeURIComponent(spec.ref)}...${encodeURIComponent(branch)}`
+    forge.webBase && repository
+      ? `${forge.webBase}/${repository.owner}/${repository.repo}/compare/${encodeURIComponent(spec.ref)}...${encodeURIComponent(branch)}`
       : undefined;
 
   let pullRequestUrl: string | undefined;
-  if (options.token && webBase && repository) {
-    try {
-      pullRequestUrl = await openPullRequest({
-        base: webBase,
-        token: options.token,
+  if (!repository) {
+    warnings.push("could not tell the repository from its url: the branch is pushed, open the change");
+  } else if (options.token) {
+    const result = await openChange(
+      forge,
+      {
         owner: repository.owner,
         repo: repository.repo,
         head: branch,
-        into: spec.ref,
+        base: spec.ref,
         title: options.title,
         body,
-      });
-    } catch (error) {
-      warnings.push(`the branch was pushed, but the pull request was not opened: ${String(error)}`);
-    }
-  } else if (!options.token) {
-    warnings.push("no token configured: the branch is pushed, the pull request is yours to open");
+      },
+      options.token,
+    );
+    pullRequestUrl = result.url;
+    warnings.push(...result.warnings);
+  } else {
+    warnings.push(`no token configured for the ${forge.kind} API. ${mcpHint(forge)}`);
   }
 
   return { branch, commit, files: written, pushed: true, compareUrl, pullRequestUrl, warnings };
@@ -284,35 +322,6 @@ export function webBaseOf(url: string): string | undefined {
   const https = /^(https?):\/\/([^/]+)\//.exec(url);
   if (https) return `${https[1]}://${https[2]}`;
   return undefined;
-}
-
-async function openPullRequest(input: {
-  base: string;
-  token: string;
-  owner: string;
-  repo: string;
-  head: string;
-  into: string;
-  title: string;
-  body: string;
-}): Promise<string> {
-  const response = await fetch(
-    `${input.base}/api/v1/repos/${input.owner}/${input.repo}/pulls`,
-    {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        authorization: `token ${input.token}`,
-      },
-      body: JSON.stringify({ head: input.head, base: input.into, title: input.title, body: input.body }),
-    },
-  );
-
-  if (!response.ok) {
-    throw new Error(`HTTP ${response.status}: ${(await response.text()).slice(0, 200)}`);
-  }
-  const created = (await response.json()) as { html_url?: string; url?: string };
-  return created.html_url ?? created.url ?? `${input.base}/${input.owner}/${input.repo}/pulls`;
 }
 
 /** Reads the provenance of an adopted file without loading the whole list. */
