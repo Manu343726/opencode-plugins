@@ -8,6 +8,8 @@ import {
   readLists,
   removeFromList,
 } from "../src/config.ts";
+import { parse as parseJsonc } from "jsonc-parser";
+
 import { tmpdir, writeFiles } from "./helpers.ts";
 
 const BASE = `{
@@ -118,4 +120,50 @@ test("the .opencode config is preferred over the root one", async () => {
   });
   const file = await findConfigFile(project);
   assert.match(file ?? "", /\.opencode/);
+});
+const BUNDLED = `{
+  // bundle shape: this plugin's options are nested under its name
+  "plugins": [
+    {
+      "package": "git+ssh://git@forgejo:2222/u/opencode-plugins.git#main",
+      "options": {
+        "plugins": ["git-skills"],
+        "git-skills": { "skills": ["a@https://h/x.git"] }
+      }
+    }
+  ]
+}
+`;
+
+test("a bundled installation is read from the nested options", async () => {
+  const project = await tmpdir("ogs-project-");
+  await writeFiles(project, { "opencode.jsonc": BUNDLED });
+
+  const lists = await readLists(project);
+  assert.deepEqual(lists.skills, ["a@https://h/x.git"]);
+  assert.deepEqual(lists.agents, []);
+});
+
+test("adding to a bundled installation stays nested", () => {
+  const next = addToList(BUNDLED, "agents", "reviewer@https://h/x.git");
+  const parsed = parseJsonc(next) as { plugins: Array<{ options: Record<string, unknown> }> };
+  const options = parsed.plugins[0]?.options ?? {};
+  assert.deepEqual((options["git-skills"] as Record<string, unknown>).agents, ["reviewer@https://h/x.git"]);
+  assert.equal(options.agents, undefined, "nothing may be written outside the plugin's own object");
+});
+
+test("removing from a bundled installation stays nested", () => {
+  const next = removeFromList(BUNDLED, "skills", "a@https://h/x.git");
+  const parsed = parseJsonc(next) as { plugins: Array<{ options: Record<string, unknown> }> };
+  assert.deepEqual((parsed.plugins[0]?.options["git-skills"] as Record<string, unknown>).skills, []);
+});
+
+test("a bundled installation with no object yet gets one", () => {
+  const text = `{
+  "plugins": [{ "package": "git+ssh://h/opencode-plugins.git#main", "options": { "plugins": ["git-skills"] } }]
+}
+`;
+  const next = addToList(text, "repos", "https://h/x.git");
+  const parsed = parseJsonc(next) as { plugins: Array<{ options: Record<string, unknown> }> };
+  assert.deepEqual((parsed.plugins[0]?.options["git-skills"] as Record<string, unknown>).repos, ["https://h/x.git"]);
 });
