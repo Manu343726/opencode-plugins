@@ -7,6 +7,8 @@
  * The panel version needed all three and the user still had to know it existed.
  */
 
+import * as fs from "node:fs";
+
 import { jsx } from "@opentui/solid/jsx-runtime";
 import { For, Show, createMemo, createSignal, onCleanup } from "solid-js";
 
@@ -114,6 +116,13 @@ function SidebarBody(props: { sessionID: string; ttlMs: number }) {
     // tree reports its own family, which does not include them.
     const root = context.data.session.root(props.sessionID);
     const all = collect(context.data.session, root);
+    try {
+      const listed = context.data.session.list();
+      fs.appendFileSync(
+        "/tmp/opencode/widget.log",
+        `${Date.now()} session=${props.sessionID} root=${root} family=${context.data.session.family(root).length} listed=${listed.length} parents=${listed.filter((item) => item.parentID).length} rows=${all.length}\n`,
+      );
+    } catch {}
     return [...prune(all, { now, ttlMs: props.ttlMs, seenFinished }).rows];
   });
 
