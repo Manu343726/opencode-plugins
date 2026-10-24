@@ -184,11 +184,19 @@ export default Plugin.define({
           const action = (input as { action?: string }).action ?? "status";
           if (action === "references") {
             const lists = await readLists(projectDir);
+            const show = (items: typeof lists.skills): string =>
+              items.length === 0
+                ? "(none)"
+                : items
+                    .map((item) => (item.enabled ? item.reference : `${item.reference} (disabled)`))
+                    .join(", ");
+
             return {
               content: [
-                `${lists.file ?? "(no project config)"}`,
-                `skills: ${lists.skills.join(", ") || "(none)"}`,
-                `agents: ${lists.agents.join(", ") || "(none)"}`,
+                `${lists.file ?? "(no config)"}`,
+                ...(lists.files.length > 1 ? [`merged from: ${lists.files.join(", ")}`] : []),
+                `skills: ${show(lists.skills)}`,
+                `agents: ${show(lists.agents)}`,
                 `repos: ${lists.repos.join(", ") || "(none)"}`,
               ].join("\n"),
             };
