@@ -288,6 +288,10 @@ export default Plugin.define({
 
     const ttlMs = finishedTtlMs(context as unknown as { options?: Record<string, unknown> });
     const view = viewOf(context.options as Record<string, unknown> | undefined);
+    try {
+      const fs = await import("node:fs");
+      fs.appendFileSync("/tmp/opencode/view.log", `options=${JSON.stringify(context.options)} view=${view}\n`);
+    } catch {}
 
     const unclaim = context.ui.slot({
       append: "sidebar.content",
