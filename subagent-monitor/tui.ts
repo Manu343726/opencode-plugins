@@ -72,15 +72,25 @@ function SidebarBody(props: { sessionID: string; ttlMs: number }) {
           h(For, {
             each: rows(),
             children: (row: Row) =>
+              // Two lines per subagent: what is running it, then the task. The
+              // sidebar is narrow, and the task is the part a person reads.
               h("box", {
-                flexDirection: "row",
-                gap: 1,
+                flexDirection: "column",
                 children: [
-                  text(row.running ? "●" : "○", {
-                    fg: row.running ? context.theme?.text?.success : context.theme?.text?.muted,
+                  h("box", {
+                    flexDirection: "row",
+                    gap: 1,
+                    children: [
+                      text(row.running ? "●" : "○", {
+                        fg: row.running ? context.theme?.text?.success : context.theme?.text?.muted,
+                      }),
+                      text(shorten(row.agent, 14)),
+                      text(row.running ? elapsed(row.created, tick()) : "done", {
+                        fg: context.theme?.text?.muted,
+                      }),
+                    ],
                   }),
-                  text(shorten(row.agent, 12)),
-                  text(row.running ? elapsed(row.created, tick()) : "done", {
+                  text(`  ${shorten(row.title, 34)}`, {
                     fg: context.theme?.text?.muted,
                   }),
                 ],
