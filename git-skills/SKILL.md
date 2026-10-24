@@ -102,4 +102,4 @@ outdated.
 The terminal side adds `/git-skills`: one modal with a **Catalog** of everything the known
 repositories hold and a **Project** view of what this project uses, each row carrying its state.
 `enter` enables, `ctrl+a` adopts, `ctrl+u` updates a copy, `ctrl+d` enables or disables an item,
-`ctrl+x` deletes it from the configuration, `tab` switches view.
+`ctrl+x` deletes it from the configuration, `ctrl+t` switches view.

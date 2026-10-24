@@ -165,13 +165,13 @@ Updating an entry with local changes asks first, because it overwrites them.
 
 ## Browsing
 
-`/git-skills` (or **Browse git skills and agents** in the palette) opens one large modal with two
-tabs. `tab` moves between them, `esc` closes it, and each tab has its own search box.
+`/git-skills` (or **Browse git skills and agents** in the palette) opens one modal with two views.
+`ctrl+t` moves between them, `esc` closes it, and each view has its own search box.
 
 | Tab | Shows | Keys |
 |---|---|---|
-| **Catalog** | every entry in the known repositories, marked as enabled, disabled or absent | `enter` enable · `ctrl+a` adopt · `tab` project |
-| **Project** | the references the project declares and the copies it owns, each with its state | `ctrl+u` update · `ctrl+d` enable/disable · `ctrl+x` delete · `tab` catalog |
+| **Catalog** | every entry in the known repositories, marked as enabled, disabled or absent | `enter` enable · `ctrl+a` adopt · `ctrl+t` project |
+| **Project** | the references the project declares and the copies it owns, each with its state | `ctrl+u` update · `ctrl+d` enable/disable · `ctrl+x` delete · `ctrl+t` catalog |
 
 *Disable* keeps the reference and flips `enabled` to `false` on the item; *enable* flips it back and
 writes the compact string. *Delete* removes the item from the configuration entirely. On an adopted
