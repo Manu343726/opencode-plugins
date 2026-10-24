@@ -213,18 +213,6 @@ function Browser(props: {
     setFailure(undefined);
     try {
       const loaded = await load(props.directory);
-      console.warn(
-        "[git-skills-tui] loaded",
-        JSON.stringify({
-          files: loaded.lists.files,
-          skills: loaded.lists.skills.length,
-          agents: loaded.lists.agents.length,
-          repos: loaded.lists.repos.length,
-          scans: loaded.scans.length,
-          entries: loaded.scans.reduce((total, scan) => total + scan.entries.length, 0),
-          warnings: loaded.warnings,
-        }),
-      );
       setData(loaded);
       // The project view is the expensive one; a failure there must not hide
       // the catalog, so it is reported beside it rather than replacing it.
@@ -392,9 +380,12 @@ function Browser(props: {
       close();
       return;
     }
-    if (name === "tab") {
+    if (name === "tab" || name === "left" || name === "right") {
       stop();
-      setView(view() === "catalog" ? "project" : "catalog");
+      const next: View = view() === "catalog" ? "project" : "catalog";
+      if (name === "left" && view() === "catalog") return;
+      if (name === "right" && view() === "project") return;
+      setView(next);
       setSelected(0);
       return;
     }
@@ -498,8 +489,8 @@ function Browser(props: {
         fg: () => muted(),
         children: () =>
           view() === "catalog"
-            ? "enter enable · ctrl+a adopt · ctrl+d disable · tab project · esc close"
-            : "enter enable · ctrl+u update · ctrl+d enable/disable · ctrl+x delete · tab catalog · esc close",
+            ? "enter enable · ctrl+a adopt · ctrl+d disable · → project · esc close"
+            : "enter enable · ctrl+u update · ctrl+d enable/disable · ctrl+x delete · ← catalog · esc close",
       }),
       h("text", {
         fg: () => muted(),
