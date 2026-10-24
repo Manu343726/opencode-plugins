@@ -61,12 +61,14 @@ and a compiled `dist/` — and it is the arrangement that loads.
 
 ## Verified
 
-Driven in a real pty against OpenCode 2.0.31, in a project that declared the plugin and re-exported
-its `tui.ts` from `.opencode/plugins/`:
+Driven in a real pty against OpenCode 2.0.31, in a project that only declared the plugin:
 
 ```
-Subagents · 0 running · 0 in this session
-No subagents yet. An agent launched in the background appears here.
+Subagents · 1 running · 1 total
+● general  44s
+  Sleep 90 then report
+○ explore  ok
+  Summarise the changelog
 ```
 
 and, with a background subagent actually running:
