@@ -108,7 +108,10 @@ function SidebarBody(props: { sessionID: string; ttlMs: number }) {
 
   const rows = createMemo<Row[]>(() => {
     const now = tick();
-    const all = collect(context.data.session, props.sessionID);
+    // The subagents hang from the session's root: a session viewed inside a
+    // tree reports its own family, which does not include them.
+    const root = context.data.session.root(props.sessionID);
+    const all = collect(context.data.session, root);
     return [...prune(all, { now, ttlMs: props.ttlMs, seenFinished }).rows];
   });
 
