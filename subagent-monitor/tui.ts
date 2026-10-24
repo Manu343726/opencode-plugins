@@ -90,6 +90,8 @@ function SidebarBody(props: { sessionID: string; ttlMs: number }) {
    * it failed, orange when it was interrupted. A session that is idle without a
    * seen ending stays uncoloured rather than claiming an outcome.
    */
+  const muted = (): string | undefined => context.theme?.text?.muted;
+
   const markerColor = (kind: ReturnType<typeof statusKind>): string | undefined => {
     const text = context.theme?.text;
     switch (kind) {
@@ -112,18 +114,6 @@ function SidebarBody(props: { sessionID: string; ttlMs: number }) {
     // tree reports its own family, which does not include them.
     const root = context.data.session.root(props.sessionID);
     const all = collect(context.data.session, root);
-    const listed = context.data.session.list();
-    console.warn(
-      "[subagent-monitor]",
-      JSON.stringify({
-        session: props.sessionID,
-        root,
-        family: context.data.session.family(root).length,
-        listed: listed.length,
-        withParent: listed.filter((item) => (item as { parentID?: string }).parentID).length,
-        rows: all.length,
-      }),
-    );
     return [...prune(all, { now, ttlMs: props.ttlMs, seenFinished }).rows];
   });
 
@@ -133,20 +123,19 @@ function SidebarBody(props: { sessionID: string; ttlMs: number }) {
     flexDirection: "column",
     paddingTop: 1,
     children: [
-      text(
-        rows().length === 0
-          ? "Subagents · none"
-          : `Subagents · ${running()} running · ${rows().length}`,
-        { fg: context.theme?.text?.muted },
-      ),
+      h("text", {
+        fg: () => muted(),
+        children: () =>
+          rows().length === 0
+            ? "Subagents · none"
+            : `Subagents · ${running()} running · ${rows().length}`,
+      }),
       h(Show, {
-        when: rows().length > 0,
+        when: () => rows().length > 0,
         children: () =>
           h(For, {
-            each: rows(),
+            each: () => rows(),
             children: (row: Row) =>
-              // Two lines per subagent: what is running it, then the task. The
-              // sidebar is narrow, and the task is the part a person reads.
               h("box", {
                 flexDirection: "column",
                 children: [
@@ -154,17 +143,23 @@ function SidebarBody(props: { sessionID: string; ttlMs: number }) {
                     flexDirection: "row",
                     gap: 1,
                     children: [
-                      text(row.running ? "●" : "○", {
-                        fg: markerColor(statusKind(row.running, outcomes.get(row.id))),
+                      h("text", {
+                        fg: () => markerColor(statusKind(row.running, outcomes.get(row.id))),
+                        children: () => (row.running ? "●" : "○"),
                       }),
-                      text(shorten(row.agent, 14), { fg: colorOf(row.agent) }),
-                      text(row.running ? elapsed(row.created, tick()) : "done", {
-                        fg: context.theme?.text?.muted,
+                      h("text", {
+                        fg: () => colorOf(row.agent),
+                        children: () => shorten(row.agent, 14),
+                      }),
+                      h("text", {
+                        fg: () => muted(),
+                        children: () => (row.running ? elapsed(row.created, tick()) : "done"),
                       }),
                     ],
                   }),
-                  text(`  ${shorten(row.title, 34)}`, {
-                    fg: context.theme?.text?.muted,
+                  h("text", {
+                    fg: () => muted(),
+                    children: () => `  ${shorten(row.title, 34)}`,
                   }),
                 ],
               }),
