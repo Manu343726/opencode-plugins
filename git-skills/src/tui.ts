@@ -1,19 +1,21 @@
 /**
- * The browser: a large modal with two tabs.
+ * The browser: one large modal with two tabs.
  *
- * - **Catalog** — every entry in the known repositories, searched with the
- *   dialog's own search box. Enter enables it in the project; `ctrl+a` adopts a
- *   copy.
- * - **Project** — what the project uses right now: the references its
- *   configuration declares and the copies it owns, each with its state.
- *   `ctrl+u` updates an adopted copy, `ctrl+d` disables a declared entry or
- *   deletes a copy.
+ * **Catalog** lists every entry in the known repositories; **Project** lists
+ * what this project uses, with the state of each item. `tab` moves between
+ * them, each has a search box, and the footer names the keys that apply.
  *
- * `tab` moves between them. The tabs are two openings of the same dialog rather
- * than one custom view: `ctrl+/tab` closes it and reopens the other, which keeps
- * the host's search box, its key handling and its scrolling instead of
- * reimplementing all three. `dialog.set` is what makes it large.
+ * It is a custom dialog (`dialog.show`) rather than `dialog.select` because the
+ * documentation is explicit about it: `select` has no size option, and the way
+ * to get a large dialog is to draw it. That also gives the tabs a real home,
+ * instead of two openings of the same picker.
  */
+
+import { jsx } from "@opentui/solid/jsx-runtime";
+import { For, Show, createMemo, createSignal, onCleanup, onMount } from "solid-js";
+
+import { Plugin } from "@opencode/plugin/tui";
+import type { Context } from "@opencode/plugin/tui/context";
 
 import {
   adoptedChoice,
@@ -33,16 +35,17 @@ import {
   remoteDigest,
   snapshot,
   STATE_LABEL,
-  type State,
 } from "./adopt.ts";
 import { addToList, readConfig, readLists, removeFromList, setEnabled, writeConfig } from "./config.ts";
 import { discover, findEntry, type Entry } from "./discover.ts";
 import { ensureCheckout } from "./git.ts";
-import { formatSpec, parseSpec, type Spec } from "./ref.ts";
+import { formatSpec, parseSpec, type Kind, type Spec } from "./ref.ts";
 import type { Item } from "./items.ts";
-import { Plugin } from "@opencode/plugin/tui";
 
-export const PANEL = "git-skills.browser";
+const h = jsx as unknown as (type: unknown, props?: Record<string, unknown>) => unknown;
+
+/** Rows drawn at once; the window scrolls around the selection. */
+const WINDOW = 14;
 
 type View = "catalog" | "project";
 
@@ -56,15 +59,16 @@ interface Scan {
 
 interface Row {
   readonly title: string;
-  readonly description?: string;
-  readonly category: string;
-  readonly value: string;
+  readonly state: string;
+  readonly group: string;
+  readonly choice: Choice | undefined;
 }
 
-const TABS: Readonly<Record<View, { title: string; other: View; otherLabel: string }>> = {
-  catalog: { title: "Git skills · catalog", other: "project", otherLabel: "Project" },
-  project: { title: "Git skills · project", other: "catalog", otherLabel: "Catalog" },
-};
+interface Data {
+  readonly lists: Awaited<ReturnType<typeof readLists>>;
+  readonly scans: readonly Scan[];
+  readonly adopted: Awaited<ReturnType<typeof listAdopted>>;
+}
 
 async function scanAll(targets: readonly Target[]): Promise<Scan[]> {
   const scans: Scan[] = [];
@@ -83,65 +87,65 @@ async function scanAll(targets: readonly Target[]): Promise<Scan[]> {
   return scans;
 }
 
-function rowsForCatalog(
-  scans: readonly Scan[],
-  adoptedIds: ReadonlySet<string>,
-  lists: { skills: readonly Item[]; agents: readonly Item[] },
-): Row[] {
+async function load(projectDir: string): Promise<Data> {
+  const lists = await readLists(projectDir);
+  const scans = await scanAll(knownTargets(lists));
+  const adopted = await listAdopted(projectDir);
+  return { lists, scans, adopted };
+}
+
+function catalogRows(data: Data): Row[] {
+  const adoptedIds = new Set(data.adopted.map((item) => `${item.kind}:${item.id}`));
   const rows: Row[] = [];
-  for (const scan of scans) {
+
+  for (const scan of data.scans) {
     const target = { url: scan.url, ref: scan.ref };
     for (const entry of scan.entries) {
       if (adoptedIds.has(`${entry.kind}:${entry.id}`)) continue;
-      const state = declarationState(entry, target, lists);
-      const prefix = state === "enabled" ? "enabled — " : state === "disabled" ? "disabled — " : "";
+      const state = declarationState(entry, target, data.lists);
       rows.push({
         title: `${entry.kind} ${entry.id}`,
-        description: `${prefix}${entry.description ?? entry.origin}`,
-        category: shortLabel(target),
-        value: encode({
+        state: state === "absent" ? "in the repository" : state,
+        group: shortLabel(target),
+        choice: {
           kind: entry.kind,
           id: entry.id,
           url: scan.url,
           ref: scan.ref,
           adopted: false,
-        }),
+          ...(state === "disabled" ? { disabled: true } : {}),
+        },
       });
     }
   }
   return rows;
 }
 
-async function rowsForProject(
-  scans: readonly Scan[],
-  projectDir: string,
-  lists: { skills: readonly Item[]; agents: readonly Item[] },
-): Promise<Row[]> {
+async function projectRows(data: Data, projectDir: string): Promise<Row[]> {
   const rows: Row[] = [];
-  const adopted = await listAdopted(projectDir);
 
-  for (const item of adopted) {
+  for (const item of data.adopted) {
     let remote: string | undefined;
     try {
       const spec = parseSpec(item.provenance.id);
-      const scan = scans.find((candidate) => candidate.url === spec.url && candidate.ref === spec.ref);
+      const scan = data.scans.find((candidate) => candidate.url === spec.url && candidate.ref === spec.ref);
       const entry = scan ? findEntry({ entries: scan.entries, problems: [] }, item.kind, item.id) : undefined;
       if (entry) remote = await remoteDigest(entry);
     } catch {
-      // provenance unreadable: report the local state only
+      // unreadable provenance: report the local state only
     }
     const state = (await snapshot(item, remote)).state;
     rows.push({
       title: `${item.kind} ${item.id}`,
-      description: `${STATE_LABEL[state]} · adopted · ${item.provenance.id}`,
-      category: "adopted",
-      value: encode(adoptedChoice(item.kind, item.id, item.provenance.id)),
+      state: `${STATE_LABEL[state]} · adopted`,
+      group: "adopted",
+      choice: adoptedChoice(item.kind, item.id, item.provenance.id),
     });
   }
 
   for (const [kind, items] of [
-    ["skill", lists.skills],
-    ["agent", lists.agents],
+    ["skill", data.lists.skills],
+    ["agent", data.lists.agents],
   ] as const) {
     for (const item of items) {
       let spec: Spec;
@@ -150,40 +154,321 @@ async function rowsForProject(
       } catch {
         rows.push({
           title: `${kind} ${item.reference}`,
-          description: "malformed reference",
-          category: "declared",
-          value: "",
+          state: "malformed reference",
+          group: "declared",
+          choice: undefined,
         });
         continue;
       }
-      if (adopted.some((item) => item.kind === kind && item.id === spec.id)) continue;
+      if (data.adopted.some((entry) => entry.kind === kind && entry.id === spec.id)) continue;
 
-      const off = !item.enabled;
-      const scan = scans.find((candidate) => candidate.url === spec.url && candidate.ref === spec.ref);
+      const scan = data.scans.find(
+        (candidate) => candidate.url === spec.url && candidate.ref === spec.ref,
+      );
       const entry = scan ? findEntry({ entries: scan.entries, problems: [] }, kind, spec.id) : undefined;
-      const state = off
-        ? "disabled · kept in the configuration"
-        : entry
-          ? "enabled · from the repository"
-          : "enabled · not found in the repository";
-
       rows.push({
         title: `${kind} ${spec.id}`,
-        description: state,
-        category: shortLabel({ url: spec.url, ref: spec.ref }),
-        value: encode({
+        state: item.enabled ? "enabled" : "disabled",
+        group: entry ? shortLabel({ url: spec.url, ref: spec.ref }) : "not in the repository",
+        choice: {
           kind,
           id: spec.id,
           url: spec.url,
           ref: spec.ref,
           adopted: false,
-          ...(off ? { disabled: true } : {}),
-        }),
+          ...(item.enabled ? {} : { disabled: true }),
+        },
       });
     }
   }
 
   return rows;
+}
+
+const LINE = (row: Row, selected: boolean): string =>
+  `${selected ? "▸" : " "} ${row.title}  ${"·"}  ${row.state}  ${"·"}  ${row.group}`;
+
+function Browser(props: { context: Context; directory: string; done: () => void }) {
+  const [view, setView] = createSignal<View>("catalog");
+  const [query, setQuery] = createSignal("");
+  const [selected, setSelected] = createSignal(0);
+  const [data, setData] = createSignal<Data | undefined>(undefined);
+  const [busy, setBusy] = createSignal(true);
+
+  const reload = async (): Promise<void> => {
+    setBusy(true);
+    try {
+      setData(await load(props.directory));
+    } catch {
+      setData(undefined);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  onMount(() => void reload());
+  onCleanup(() => {});
+
+  const all = createMemo<Row[]>(() => {
+    const current = data();
+    if (!current) return [];
+    // The project view needs the digests, so it is recomputed when data changes
+    // and kept in state by `projectCache`.
+    return view() === "catalog" ? catalogRows(current) : projectCache();
+  });
+
+  const [projectCache, setProjectCache] = createSignal<Row[]>([]);
+  createMemo(() => {
+    const current = data();
+    if (!current) return;
+    void projectRows(current, props.directory).then(setProjectCache);
+  });
+
+  const rows = createMemo<Row[]>(() => {
+    const needle = query().trim().toLowerCase();
+    const list = all();
+    return needle === ""
+      ? list
+      : list.filter((row) => `${row.title} ${row.state} ${row.group}`.toLowerCase().includes(needle));
+  });
+
+  const offset = createMemo(() => {
+    const total = rows().length;
+    const index = Math.min(selected(), Math.max(0, total - 1));
+    return Math.max(0, Math.min(index - WINDOW + 1, Math.max(0, total - WINDOW)));
+  });
+
+  const toast = (message: string, variant: "success" | "error" | "info" = "info"): void => {
+    void props.context.ui.toast.show({ title: "Git skills", message, variant, duration: 5000 });
+  };
+
+  const current = (): Row | undefined => rows()[Math.min(selected(), Math.max(0, rows().length - 1))];
+
+  const close = (): void => {
+    props.context.ui.dialog.clear();
+    props.done();
+  };
+
+  async function enable(choice: Choice | undefined): Promise<void> {
+    if (!choice) return;
+    if (choice.adopted) {
+      toast(`${choice.kind} ${choice.id} is an adopted copy`);
+      return;
+    }
+    if (choice.disabled) {
+      await toggle(choice);
+      return;
+    }
+    const file = (await readLists(props.directory)).file;
+    if (!file) {
+      toast("No configuration file to edit", "error");
+      return;
+    }
+    const key = choice.kind === "skill" ? "skills" : "agents";
+    const reference = formatSpec({ id: choice.id, url: choice.url, ref: choice.ref });
+    const text = await readConfig(file);
+    const next = addToList(text, key, reference);
+    if (next === text) {
+      toast(`${choice.kind} ${choice.id} is already enabled`);
+      return;
+    }
+    await writeConfig(file, next);
+    toast(`${choice.kind} ${choice.id} enabled`, "success");
+    await reload();
+  }
+
+  /** Keeps the reference and flips its state; an adopted copy is deleted instead. */
+  async function toggle(choice: Choice | undefined): Promise<void> {
+    if (!choice) return;
+    if (choice.adopted) {
+      const item = (await listAdopted(props.directory)).find(
+        (candidate) => candidate.kind === choice.kind && candidate.id === choice.id,
+      );
+      if (item) await removeAdopted(item);
+      toast(`${choice.kind} ${choice.id} deleted`, "success");
+      await reload();
+      return;
+    }
+    const file = (await readLists(props.directory)).file;
+    if (!file) return;
+    const key = choice.kind === "skill" ? "skills" : "agents";
+    const reference = formatSpec({ id: choice.id, url: choice.url, ref: choice.ref });
+    const next = setEnabled(await readConfig(file), key, reference, choice.disabled === true);
+    await writeConfig(file, next);
+    toast(`${choice.kind} ${choice.id} ${choice.disabled ? "enabled" : "disabled"}`, "success");
+    await reload();
+  }
+
+  async function remove(choice: Choice | undefined): Promise<void> {
+    if (!choice) return;
+    const file = (await readLists(props.directory)).file;
+    if (!file) return;
+    const key = choice.kind === "skill" ? "skills" : "agents";
+    const reference = formatSpec({ id: choice.id, url: choice.url, ref: choice.ref });
+    await writeConfig(file, removeFromList(await readConfig(file), key, reference));
+    if (choice.adopted) {
+      const item = (await listAdopted(props.directory)).find(
+        (candidate) => candidate.kind === choice.kind && candidate.id === choice.id,
+      );
+      if (item) await removeAdopted(item);
+    }
+    toast(`${choice.kind} ${choice.id} removed from the project`, "success");
+    await reload();
+  }
+
+  async function adopt(choice: Choice | undefined): Promise<void> {
+    if (!choice) return;
+    if (choice.adopted) {
+      toast(`${choice.kind} ${choice.id} is already adopted`);
+      return;
+    }
+    const conflict = await existingDefinition(props.directory, choice.kind, choice.id);
+    if (conflict) {
+      toast(`${choice.kind} ${choice.id} exists here and was not adopted: ${conflict}`, "error");
+      return;
+    }
+    const checkout = await ensureCheckout({ url: choice.url, ref: choice.ref });
+    if (checkout.commit === "") {
+      toast(`${choice.kind} ${choice.id}: repository unavailable`, "error");
+      return;
+    }
+    const discovery = await discover(checkout.dir);
+    const entry = findEntry({ entries: discovery.entries, problems: [] }, choice.kind, choice.id);
+    if (!entry) {
+      toast(`${choice.kind} ${choice.id} is not in the repository any more`, "error");
+      return;
+    }
+    await adoptEntry({
+      entry,
+      projectDir: props.directory,
+      spec: { id: choice.id, url: choice.url, ref: choice.ref },
+      commit: checkout.commit,
+    });
+    toast(`${choice.kind} ${choice.id} adopted`, "success");
+    await reload();
+  }
+
+  const act = async (name: "enter" | "adopt" | "update" | "toggle" | "remove"): Promise<void> => {
+    const row = current();
+    if (!row?.choice) return;
+    if (name === "enter") await enable(row.choice);
+    if (name === "adopt") await adopt(row.choice);
+    if (name === "update") await adopt(row.choice);
+    if (name === "toggle") await toggle(row.choice);
+    if (name === "remove") await remove(row.choice);
+  };
+
+  const onKey = (event: { name?: string; ctrl?: boolean; preventDefault?: () => void }): void => {
+    const name = event.name ?? "";
+    const stop = (): void => event.preventDefault?.();
+
+    if (name === "escape") {
+      stop();
+      close();
+      return;
+    }
+    if (name === "tab") {
+      stop();
+      setView(view() === "catalog" ? "project" : "catalog");
+      setSelected(0);
+      return;
+    }
+    if (name === "up") {
+      stop();
+      setSelected((index) => Math.max(0, index - 1));
+      return;
+    }
+    if (name === "down") {
+      stop();
+      setSelected((index) => Math.min(rows().length - 1, index + 1));
+      return;
+    }
+    if (name === "return") {
+      stop();
+      void act("enter");
+      return;
+    }
+    if (!event.ctrl) return;
+
+    const actions: Record<string, "adopt" | "update" | "toggle" | "remove"> = {
+      a: "adopt",
+      u: "update",
+      d: "toggle",
+      x: "remove",
+    };
+    const action = actions[name];
+    if (action) {
+      stop();
+      void act(action);
+      return;
+    }
+    if (name === "r") {
+      stop();
+      void reload();
+    }
+  };
+
+  const muted = (): string | undefined => props.context.theme?.text?.muted;
+
+  const tab = (id: View, label: string) =>
+    h("text", {
+      fg: view() === id ? props.context.theme?.text?.accent : muted(),
+      children: view() === id ? `[${label}]` : ` ${label} `,
+    });
+
+  return h("box", {
+    flexDirection: "column",
+    width: "100%",
+    height: "100%",
+    paddingLeft: 1,
+    paddingRight: 1,
+    gap: 0,
+    children: [
+      h("box", {
+        flexDirection: "row",
+        gap: 2,
+        children: [tab("catalog", "Catalog"), tab("project", "Project")],
+      }),
+      h("input", {
+        focused: true,
+        placeholder:
+          view() === "catalog" ? "Search every known repository" : "Search what this project uses",
+        value: query(),
+        onInput: (value: string) => {
+          setQuery(value);
+          setSelected(0);
+        },
+        onKeyDown: onKey,
+      }),
+      h(Show, {
+        when: !busy() && rows().length > 0,
+        fallback: h("text", {
+          fg: muted(),
+          children: busy() ? "Loading…" : "Nothing matches.",
+        }),
+        children: () =>
+          h(For, {
+            each: rows().slice(offset(), offset() + WINDOW),
+            children: (row: Row) =>
+              h("text", {
+                fg: rows()[Math.min(selected(), rows().length - 1)] === row ? undefined : muted(),
+                children: LINE(row, rows()[Math.min(selected(), rows().length - 1)] === row),
+              }),
+          }),
+      }),
+      h("text", {
+        fg: muted(),
+        children:
+          view() === "catalog"
+            ? "enter enable · ctrl+a adopt · ctrl+d disable · tab project · esc close"
+            : "enter enable · ctrl+u update · ctrl+d enable/disable · ctrl+x delete · tab catalog · esc close",
+      }),
+      h("text", {
+        fg: muted(),
+        children: `${rows().length} item(s) · ${props.directory}`,
+      }),
+    ],
+  });
 }
 
 export default Plugin.define({
@@ -194,233 +479,17 @@ export default Plugin.define({
     if (typeof terminal.keymap?.layer !== "function") return;
 
     const projectDir = (): string => context.location?.directory ?? process.cwd();
-    const toast = (message: string, variant: "success" | "error" | "info" = "info"): void => {
-      void context.ui.toast.show({ title: "Git skills", message, variant, duration: 5000 });
-    };
 
-    const browse = async (): Promise<void> => {
-      const lists = await readLists(projectDir());
-      const targets = knownTargets(lists);
-      const adopted = await listAdopted(projectDir());
-
-      if (targets.length === 0 && adopted.length === 0) {
-        toast("No repositories declared. Add one to the plugin's options.repos.");
-        return;
-      }
-
-      const scans = await scanAll(targets);
-      for (const scan of scans) if (scan.warning) toast(scan.warning, "error");
-
-      let view: View = "catalog";
-      for (;;) {
-        const adoptedIds = new Set(adopted.map((item) => `${item.kind}:${item.id}`));
-        const rows =
-          view === "catalog"
-            ? rowsForCatalog(scans, adoptedIds, lists)
-            : await rowsForProject(scans, projectDir(), lists);
-
-        let switched = false;
-        const tab: { title: string; other: View; otherLabel: string } = TABS[view];
-
-        try {
-          context.ui.dialog.set({ size: "xlarge" });
-        } catch {
-          // The dialog may not be active yet on this build; the size is cosmetic.
-        }
-
-        const selected = await context.ui.dialog.select({
-          title: tab.title,
-          placeholder:
-            view === "catalog" ? "Search every known repository" : "Search what this project uses",
-          options: rows,
-          search: (query, all) =>
-            all.filter((option) =>
-              `${option.title} ${option.description ?? ""} ${option.category ?? ""}`
-                .toLowerCase()
-                .includes(query.toLowerCase()),
-            ),
-          actions: [
-            view === "catalog"
-              ? {
-                  bind: "ctrl+a",
-                  title: "Adopt",
-                  onTrigger: (value) => void adopt(decode(String(value))),
-                }
-              : {
-                  bind: "ctrl+u",
-                  title: "Update",
-                  onTrigger: (value) => void update(decode(String(value))),
-                },
-            view === "catalog"
-              ? {
-                  bind: "ctrl+e",
-                  title: "Enable",
-                  onTrigger: (value) => void enable(decode(String(value))),
-                }
-              : {
-                  bind: "ctrl+d",
-                  title: "Disable/Enable",
-                  onTrigger: (value) => void toggle(decode(String(value))),
-                },
-            view === "catalog"
-              ? {
-                  bind: "ctrl+r",
-                  title: "Refresh",
-                  selection: "none",
-                  onTrigger: () => void browse(),
-                }
-              : {
-                  bind: "ctrl+x",
-                  title: "Delete",
-                  onTrigger: (value) => void remove(decode(String(value))),
-                },
-            {
-              bind: "tab",
-              title: tab.otherLabel,
-              selection: "none",
-              onTrigger: () => {
-                switched = true;
-                context.ui.dialog.clear();
-              },
-            },
-          ],
-        });
-
-        if (switched) {
-          view = tab.other;
-          continue;
-        }
-
-        const choice = selected === undefined ? undefined : decode(String(selected));
-        if (!choice) return;
-
-        // Enter on a catalog row enables it; on a project row there is nothing
-        // to enable, so it only reports.
-        if (view === "catalog") await enable(choice);
-        else toast(summaryOf(choice));
-        return;
-      }
-    };
-
-    function summaryOf(choice: Choice): string {
-      return `${choice.kind} ${choice.id} · ${choice.adopted ? "adopted copy" : "enabled from a repository"}`;
-    }
-
-    async function enable(choice: Choice | undefined): Promise<void> {
-      if (!choice) return;
-      if (choice.adopted) {
-        toast(`${choice.kind} ${choice.id} is an adopted copy; nothing to enable`);
-        return;
-      }
-      const file = (await readLists(projectDir())).file;
-      if (!file) {
-        toast("No configuration file to edit", "error");
-        return;
-      }
-      const key = choice.kind === "skill" ? "skills" : "agents";
-      const reference = formatSpec({ id: choice.id, url: choice.url, ref: choice.ref });
-      const text = await readConfig(file);
-      const withReference = addToList(text, key, reference);
-      const next = setEnabled(withReference, key, reference, true);
-      if (next !== text) await writeConfig(file, next);
-      toast(
-        next === text ? `${choice.kind} ${choice.id} is already enabled` : `${choice.kind} ${choice.id} enabled`,
-        next === text ? "info" : "success",
-      );
-    }
-
-    /**
-     * Turns a declared reference off without losing it: the entry stays in
-     * `skills`/`agents` and is listed under `disabled`, which the loader skips.
-     * An adopted copy has no reference to keep, so this deletes the copy.
-     */
-    async function toggle(choice: Choice | undefined): Promise<void> {
-      if (!choice) return;
-
-      if (choice.adopted) {
-        const item = (await listAdopted(projectDir())).find(
-          (candidate) => candidate.kind === choice.kind && candidate.id === choice.id,
+    const browse = (): void => {
+      void new Promise<void>((resolve) => {
+        context.ui.dialog.show(
+          () => h(Browser, { context, directory: projectDir(), done: resolve }),
+          () => resolve(),
         );
-        if (item) await removeAdopted(item);
-        toast(`${choice.kind} ${choice.id} deleted`, "success");
-        return;
-      }
-
-      const file = (await readLists(projectDir())).file;
-      if (!file) {
-        toast("No configuration file to edit", "error");
-        return;
-      }
-
-      const reference = formatSpec({ id: choice.id, url: choice.url, ref: choice.ref });
-      const text = await readConfig(file);
-      const next = setEnabled(text, choice.kind === "skill" ? "skills" : "agents", reference, choice.disabled === true);
-      if (next !== text) await writeConfig(file, next);
-      toast(
-        `${choice.kind} ${choice.id} ${choice.disabled ? "enabled" : "disabled"}`,
-        next === text ? "info" : "success",
-      );
-    }
-
-    /** Removes the reference from the project entirely, and any copy of it. */
-    async function remove(choice: Choice | undefined): Promise<void> {
-      if (!choice) return;
-
-      const file = (await readLists(projectDir())).file;
-      if (!file) return;
-
-      const key = choice.kind === "skill" ? "skills" : "agents";
-      const reference = formatSpec({ id: choice.id, url: choice.url, ref: choice.ref });
-      const text = removeFromList(await readConfig(file), key, reference);
-      await writeConfig(file, text);
-
-      if (choice.adopted) {
-        const item = (await listAdopted(projectDir())).find(
-          (candidate) => candidate.kind === choice.kind && candidate.id === choice.id,
-        );
-        if (item) await removeAdopted(item);
-      }
-      toast(`${choice.kind} ${choice.id} removed from the project`, "success");
-    }
-
-    async function adopt(choice: Choice | undefined): Promise<void> {
-      if (!choice) return;
-      if (choice.adopted) {
-        toast(`${choice.kind} ${choice.id} is already adopted`);
-        return;
-      }
-      const conflict = await existingDefinition(projectDir(), choice.kind, choice.id);
-      if (conflict) {
-        toast(`${choice.kind} ${choice.id} already exists here, and was not adopted: ${conflict}`, "error");
-        return;
-      }
-      const checkout = await ensureCheckout({ url: choice.url, ref: choice.ref });
-      if (checkout.commit === "") {
-        toast(`${choice.kind} ${choice.id}: repository unavailable`, "error");
-        return;
-      }
-      const discovery = await discover(checkout.dir);
-      const entry = findEntry({ entries: discovery.entries, problems: [] }, choice.kind, choice.id);
-      if (!entry) {
-        toast(`${choice.kind} ${choice.id} is not in the repository any more`, "error");
-        return;
-      }
-      await adoptEntry({
-        entry,
-        projectDir: projectDir(),
-        spec: { id: choice.id, url: choice.url, ref: choice.ref },
-        commit: checkout.commit,
+        // The documentation's own order: show, then size the dialog that is open.
+        context.ui.dialog.set({ size: "xlarge", centered: true });
       });
-      toast(`${choice.kind} ${choice.id} adopted`, "success");
-    }
-
-    async function update(choice: Choice | undefined): Promise<void> {
-      if (!choice || !choice.adopted) {
-        toast("Only an adopted copy can be updated", "error");
-        return;
-      }
-      await adopt(choice);
-    }
+    };
 
     context.keymap.layer(() => ({
       mode: "global",
@@ -432,7 +501,7 @@ export default Plugin.define({
           group: "Git skills",
           palette: true,
           slash: { name: "git-skills" },
-          run: () => void browse(),
+          run: browse,
         },
       ],
       bindings: ["git-skills.browse"],
@@ -440,4 +509,5 @@ export default Plugin.define({
   },
 });
 
-export type { State };
+export { encode, decode };
+export type { Choice };
