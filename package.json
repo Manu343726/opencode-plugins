@@ -9,7 +9,7 @@
     "node": ">=22"
   },
   "scripts": {
-    "test": "node --test git-skills/test/ subagent-monitor/test/",
+    "test": "node --test \"git-skills/test/**/*.test.ts\" \"subagent-monitor/test/**/*.test.ts\"",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
