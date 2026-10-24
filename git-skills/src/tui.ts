@@ -465,6 +465,45 @@ function Browser(props: {
         children: [tab("catalog", "Catalog"), tab("project", "Project")],
       }),
       h("input", {
+        focused: true,
+        onKeyDown: (event: { name?: string; ctrl?: boolean }) => {
+          const name = (event.name ?? "").toLowerCase();
+          const plain = name.replace(/^arrow/, "");
+          if (plain === "right" || plain === "left") {
+            setView(plain === "right" ? "project" : "catalog");
+            setSelected(0);
+            return;
+          }
+          if (plain === "tab") {
+            setView(view() === "catalog" ? "project" : "catalog");
+            setSelected(0);
+            return;
+          }
+          if (plain === "up" || plain === "down") {
+            setSelected((index) =>
+              plain === "up" ? Math.max(0, index - 1) : Math.min(rows().length - 1, index + 1),
+            );
+            return;
+          }
+          if (plain === "return" || plain === "enter") {
+            void act("enter");
+            return;
+          }
+          if (plain === "escape") {
+            close();
+            return;
+          }
+          if (!event.ctrl) return;
+          const actions: Record<string, "adopt" | "update" | "toggle" | "remove"> = {
+            a: "adopt",
+            u: "update",
+            d: "toggle",
+            x: "remove",
+          };
+          const action = actions[name];
+          if (action) void act(action);
+          else if (name === "r") void reload();
+        },
         placeholder: "Search",
         onInput: (value: string) => {
           setQuery(value);
