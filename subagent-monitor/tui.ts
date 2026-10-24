@@ -12,7 +12,7 @@ import { For, Show, createMemo, createSignal, onCleanup } from "solid-js";
 
 import { Plugin, usePlugin } from "@opencode/plugin/tui";
 
-import { collect, elapsed, type Row } from "./collect.ts";
+import { collect, elapsed, prune, type Row } from "./collect.ts";
 
 /** Keeps a title short enough for a narrow sidebar. */
 function shorten(value: string, max: number): string {
@@ -25,7 +25,14 @@ const h = jsx as unknown as (type: unknown, props?: Record<string, unknown>) => 
 const text = (content: string, attributes?: Record<string, unknown>) =>
   h("text", { ...attributes, children: content });
 
-function SidebarBody(props: { sessionID: string }) {
+/** How long a finished subagent stays in the list. */
+function finishedTtlMs(context: { options?: Record<string, unknown> }): number {
+  const configured = context.options?.finishedTtlMinutes;
+  const minutes = typeof configured === "number" && configured >= 0 ? configured : 5;
+  return minutes * 60_000;
+}
+
+function SidebarBody(props: { sessionID: string; ttlMs: number }) {
   const context = usePlugin();
 
   const [tick, setTick] = createSignal(Date.now());
@@ -34,9 +41,17 @@ function SidebarBody(props: { sessionID: string }) {
   });
   onCleanup(stop);
 
+  // A finished subagent has to leave on its own schedule, not on the next event:
+  // a quiet session emits nothing.
+  const timer = setInterval(() => setTick(Date.now()), 30_000);
+  onCleanup(() => clearInterval(timer));
+
+  const seenFinished = new Map<string, number>();
+
   const rows = createMemo<Row[]>(() => {
-    tick();
-    return collect(context.data.session, props.sessionID);
+    const now = tick();
+    const all = collect(context.data.session, props.sessionID);
+    return [...prune(all, { now, ttlMs: props.ttlMs, seenFinished }).rows];
   });
 
   const running = createMemo(() => rows().filter((row) => row.running).length);
@@ -85,9 +100,11 @@ export default Plugin.define({
     const terminal = context as unknown as { keymap?: { layer?: unknown } };
     if (typeof terminal.keymap?.layer !== "function") return;
 
+    const ttlMs = finishedTtlMs(context as unknown as { options?: Record<string, unknown> });
+
     const unclaim = context.ui.slot({
       append: "sidebar.content",
-      render: (props) => h(SidebarBody, { sessionID: props.sessionID }),
+      render: (props) => h(SidebarBody, { sessionID: props.sessionID, ttlMs }),
     });
 
     return () => {

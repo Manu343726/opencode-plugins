@@ -13,7 +13,7 @@ reaches the others.
 | Plugin | What it does | Status |
 |---|---|---|
 | [`git-skills`](git-skills/README.md) | Uses git repositories as per-project sources of skills and agents: declares `<id>@<url>:<ref>` references, registers them at startup, and can adopt an entry into the project with its provenance so drift is detectable | in use |
-| [`subagent-monitor`](subagent-monitor/README.md) | Shows the agents working in the current session in the side panel: running first, with elapsed time, and finished ones marked done | new |
+| [`subagent-monitor`](subagent-monitor/README.md) | Shows the agents working in the current session in the sidebar: running first, with elapsed time, finished ones marked done and gone five minutes later (`finishedTtlMinutes`) | new |
 
 ## Panels and the terminal half
 

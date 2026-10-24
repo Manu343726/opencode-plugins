@@ -23,6 +23,14 @@ Subagents · 1 running · 1
 ○ explore  done
 ```
 
+A finished subagent disappears **five minutes** after it ended — long enough to notice it
+finished, short enough that the list does not become a history of the session. The delay is the
+plugin's `finishedTtlMinutes` option; `0` keeps them listed forever.
+
+```jsonc
+"subagent-monitor": { "finishedTtlMinutes": 2 }
+```
+
 ## How it is built
 
 The plugin is plain TypeScript that calls OpenTUI's JSX runtime directly — `jsx(type, props)` from

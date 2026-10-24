@@ -10,7 +10,7 @@
 export interface SessionInfoLike {
   readonly title?: string;
   readonly agent?: { readonly id?: string } | string;
-  readonly time?: { readonly created?: number };
+  readonly time?: { readonly created?: number; readonly updated?: number };
 }
 
 /** The slice of `data.session` this needs, so it can be faked in a test. */
@@ -26,6 +26,8 @@ export interface Row {
   readonly agent: string;
   readonly running: boolean;
   readonly created: number;
+  /** When the session last changed, which for a finished one is when it ended. */
+  readonly updated: number;
 }
 
 function agentOf(info: SessionInfoLike | undefined): string {
@@ -52,6 +54,7 @@ export function collect(sessions: SessionsLike, sessionID: string): Row[] {
         agent: agentOf(info),
         running: sessions.status(id) === "running",
         created: info?.time?.created ?? 0,
+        updated: info?.time?.updated ?? info?.time?.created ?? 0,
       };
     })
     .sort((left, right) => {
@@ -86,4 +89,56 @@ export function summary(rows: readonly Row[], now: number): string {
     row.running ? `● ${row.agent} (${elapsed(row.created, now) || "running"})` : `○ ${row.agent} done`,
   );
   return `${head} — ${parts.join(" · ")}`;
+}
+export interface PruneOptions {
+  readonly now: number;
+  /** How long a finished subagent stays visible. `0` keeps them forever. */
+  readonly ttlMs: number;
+  /** When each finished subagent was first seen finished. Mutated in place. */
+  readonly seenFinished: Map<string, number>;
+}
+
+export interface Pruned {
+  readonly rows: readonly Row[];
+  /** Ids dropped by this call, so a caller can forget them. */
+  readonly removed: readonly string[];
+}
+
+/**
+ * Drops subagents that finished more than `ttlMs` ago.
+ *
+ * The moment a subagent finished is the session's `time.updated` — its last
+ * change — with a local fallback for the first time this monitor saw it idle:
+ * a session that finished before the widget was mounted still has an `updated`,
+ * but one whose timestamp is missing would otherwise never expire.
+ *
+ * A subagent that runs again is forgotten, so a restarted one gets its full
+ * time again instead of disappearing on the tail of its previous run.
+ */
+export function prune(rows: readonly Row[], options: PruneOptions): Pruned {
+  if (options.ttlMs <= 0) return { rows, removed: [] };
+
+  const removed: string[] = [];
+  const kept: Row[] = [];
+
+  for (const row of rows) {
+    if (row.running) {
+      options.seenFinished.delete(row.id);
+      kept.push(row);
+      continue;
+    }
+
+    const first = options.seenFinished.get(row.id);
+    const since = first ?? (row.updated > 0 ? row.updated : options.now);
+    if (first === undefined) options.seenFinished.set(row.id, since);
+
+    if (options.now - since >= options.ttlMs) {
+      options.seenFinished.delete(row.id);
+      removed.push(row.id);
+      continue;
+    }
+    kept.push(row);
+  }
+
+  return { rows: kept, removed };
 }

@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { collect, elapsed, summary, type SessionsLike } from "../collect.ts";
+import { collect, elapsed, prune, summary, type SessionsLike } from "../collect.ts";
 
 function fake(children: Array<[string, string, "idle" | "running", number]>): SessionsLike {
   const byId = new Map(children.map(([id, agent, status, created]) => [id, { agent, status, created }]));
@@ -79,4 +79,62 @@ test("elapsed time is readable at each scale", () => {
   assert.equal(elapsed(0, 1000), "");
   assert.equal(elapsed(1000, 1000 + 65_000), "1m05s");
   assert.equal(elapsed(1000, 1000 + 3_725_000), "1h02m");
+});
+
+test("a finished subagent stays for the ttl and then goes", () => {
+  const rows = collect(fake([["a", "reviewer", "idle", 1_000]]), "root");
+  const seen = new Map<string, number>();
+  const start = 1_000 + 60_000;
+
+  const first = prune(rows, { now: start, ttlMs: 300_000, seenFinished: seen });
+  assert.equal(first.rows.length, 1, "still inside the five minutes");
+
+  const later = prune(rows, { now: start + 300_001, ttlMs: 300_000, seenFinished: seen });
+  assert.equal(later.rows.length, 0);
+  assert.deepEqual(later.removed, ["a"]);
+});
+
+test("a running subagent is never pruned", () => {
+  const rows = collect(fake([["a", "reviewer", "running", 1]]), "root");
+  const seen = new Map<string, number>([["a", 1]]);
+  const out = prune(rows, { now: 10_000_000, ttlMs: 300_000, seenFinished: seen });
+  assert.equal(out.rows.length, 1);
+  assert.equal(seen.has("a"), false, "a running subagent is forgotten, not timed");
+});
+
+test("a subagent that runs again gets the full time again", () => {
+  const seen = new Map<string, number>();
+  const idle = collect(fake([["a", "reviewer", "idle", 1_000]]), "root");
+  prune(idle, { now: 200_000, ttlMs: 300_000, seenFinished: seen });
+  assert.equal(seen.has("a"), true);
+
+  const running = collect(fake([["a", "reviewer", "running", 1_000]]), "root");
+  prune(running, { now: 210_000, ttlMs: 300_000, seenFinished: seen });
+  assert.equal(seen.has("a"), false);
+
+  const again = collect(fake([["a", "reviewer", "idle", 1_000]]), "root");
+  const out = prune(again, { now: 250_000, ttlMs: 300_000, seenFinished: seen });
+  assert.equal(out.rows.length, 1);
+});
+
+test("a ttl of zero keeps finished subagents forever", () => {
+  const rows = collect(fake([["a", "reviewer", "idle", 1]]), "root");
+  const out = prune(rows, { now: 10_000_000, ttlMs: 0, seenFinished: new Map() });
+  assert.equal(out.rows.length, 1);
+});
+
+test("the session's own updated time is the fallback when it was already finished", () => {
+  const sessions: SessionsLike = {
+    family: () => ["root", "a"],
+    get: () => ({ title: "done", agent: "reviewer", time: { created: 1_000, updated: 400_000 } }),
+    status: () => "idle",
+  };
+  const rows = collect(sessions, "root");
+  assert.equal(rows[0]?.updated, 400_000);
+
+  const seen = new Map<string, number>();
+  const justAfter = prune(rows, { now: 500_000, ttlMs: 300_000, seenFinished: seen });
+  assert.equal(justAfter.rows.length, 1);
+  const longAfter = prune(rows, { now: 700_001, ttlMs: 300_000, seenFinished: seen });
+  assert.equal(longAfter.rows.length, 0);
 });
