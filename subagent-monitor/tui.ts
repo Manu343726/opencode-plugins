@@ -39,10 +39,37 @@ function SidebarBody(props: { sessionID: string; ttlMs: number }) {
   // session only names the agent, so the definition is looked up by id; an
   // agent with no colour, or one that is not in the list, keeps the default.
   void context.data.location.agent.sync(context.location).catch(() => undefined);
-  const colorOf = (agentID: string): string | undefined => {
+  /**
+   * A colour from the theme, by the names the theme actually has.
+   *
+   * `text.feedback.<kind>.base` and `text.base`/`muted` are the tokens; the first
+   * attempt used `text.info`, `text.success` and friends, which do not exist and
+   * resolved to nothing — the sidebar stayed grey.
+   */
+  const feedback = (kind: "success" | "warning" | "error" | "info"): unknown =>
+    (context.theme?.text?.feedback as Record<string, { base?: unknown }> | undefined)?.[kind]?.base;
+
+  const colorOf = (agentID: string): unknown => {
     const agents = context.data.location.agent.list(context.location) ?? [];
-    const found = agents.find((agent) => agent.id === agentID);
-    return found?.color;
+    const declared = agents.find((agent) => agent.id === agentID)?.color;
+    if (!declared) return undefined;
+    if (declared.startsWith("#")) return declared;
+
+    // An agent may name a theme colour rather than give a hex value.
+    const named: Record<string, "base" | "muted" | "success" | "warning" | "error" | "info"> = {
+      primary: "base",
+      secondary: "muted",
+      accent: "info",
+      success: "success",
+      warning: "warning",
+      error: "error",
+      info: "info",
+    };
+    const token = named[declared];
+    if (!token) return undefined;
+    if (token === "base") return context.theme?.text?.base;
+    if (token === "muted") return context.theme?.text?.muted;
+    return feedback(token);
   };
 
   const [tick, setTick] = createSignal(Date.now());
@@ -92,19 +119,18 @@ function SidebarBody(props: { sessionID: string; ttlMs: number }) {
    */
   const muted = (): string | undefined => context.theme?.text?.muted;
 
-  const markerColor = (kind: ReturnType<typeof statusKind>): string | undefined => {
-    const text = context.theme?.text;
+  const markerColor = (kind: ReturnType<typeof statusKind>): unknown => {
     switch (kind) {
       case "running":
-        return text?.info ?? text?.accent;
+        return feedback("info");
       case "ok":
-        return text?.success;
+        return feedback("success");
       case "error":
-        return text?.error;
+        return feedback("error");
       case "aborted":
-        return text?.warning;
+        return feedback("warning");
       default:
-        return text?.muted;
+        return context.theme?.text?.muted;
     }
   };
 
