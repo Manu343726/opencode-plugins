@@ -159,8 +159,8 @@ test("readOptions accepts the documented shape and reports the rest", () => {
   });
 
   assert.deepEqual(problems, []);
-  assert.deepEqual(options.skills, ["a@https://h/x.git"]);
-  assert.deepEqual(options.agents, ["b@https://h/x.git:v1"]);
+  assert.deepEqual(options.skills, [{ reference: "a@https://h/x.git", enabled: true }]);
+  assert.deepEqual(options.agents, [{ reference: "b@https://h/x.git:v1", enabled: true }]);
   assert.equal(options.ttlMinutes, 10);
   assert.equal(options.offline, true);
 });
@@ -177,4 +177,30 @@ test("summarize names what was loaded and what was skipped", async () => {
   const text = summarize(resolution);
   assert.match(text, /1 skill\(s\), 0 agent\(s\)/);
   assert.match(text, /skill docs @/);
+});
+test("a disabled reference is kept in the config and not loaded", async () => {
+  const { url, project, cacheDir } = await fixture();
+
+  const resolution = await resolve(project, {
+    skills: ["docs@" + url, { reference: "code-review@" + url, enabled: false }],
+    cacheDir,
+  });
+
+  assert.deepEqual(resolution.entries.map((entry) => entry.spec.id), ["docs"]);
+  assert.equal(resolution.skipped.length, 1);
+  assert.equal(resolution.skipped[0]?.reason, "disabled");
+  assert.equal(resolution.skipped[0]?.spec.id, "code-review");
+});
+
+test("a disabled reference does not cost a clone", async () => {
+  const { url, project, cacheDir } = await fixture();
+
+  const resolution = await resolve(project, {
+    skills: [{ reference: "docs@" + url, enabled: false }],
+    cacheDir,
+  });
+
+  assert.deepEqual(resolution.entries, []);
+  assert.deepEqual(resolution.repositories, []);
+  assert.deepEqual(await fs.readdir(cacheDir), []);
 });

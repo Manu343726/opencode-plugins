@@ -5,7 +5,7 @@ import {
   adoptedChoice,
   decode,
   encode,
-  isDeclared,
+  declarationState,
   knownTargets,
   shortLabel,
   type Choice,
@@ -69,16 +69,35 @@ test("a malformed reference does not stop the browser", () => {
   assert.deepEqual(targets, [{ url: "https://h/a.git", ref: "main" }]);
 });
 
-test("an entry already in the config is recognised", () => {
-  const lists = { skills: ["docs@https://h/a.git:v1"], agents: [] };
-  assert.equal(isDeclared({ kind: "skill", id: "docs" }, { url: "https://h/a.git", ref: "v1" }, lists), true);
-  assert.equal(isDeclared({ kind: "skill", id: "docs" }, { url: "https://h/a.git", ref: "main" }, lists), false);
-  assert.equal(isDeclared({ kind: "agent", id: "docs" }, { url: "https://h/a.git", ref: "v1" }, lists), false);
+test("a declared entry is recognised, and so is a disabled one", () => {
+  const lists = {
+    skills: ["docs@https://h/a.git:v1", { reference: "other@https://h/a.git:v2", enabled: false }],
+    agents: [],
+  };
+  assert.equal(
+    declarationState({ kind: "skill", id: "docs" }, { url: "https://h/a.git", ref: "v1" }, lists),
+    "enabled",
+  );
+  assert.equal(
+    declarationState({ kind: "skill", id: "other" }, { url: "https://h/a.git", ref: "v2" }, lists),
+    "disabled",
+  );
+  assert.equal(
+    declarationState({ kind: "skill", id: "docs" }, { url: "https://h/a.git", ref: "main" }, lists),
+    "absent",
+  );
+  assert.equal(
+    declarationState({ kind: "agent", id: "docs" }, { url: "https://h/a.git", ref: "v1" }, lists),
+    "absent",
+  );
 });
 
 test("a malformed declaration is not mistaken for a match", () => {
   const lists = { skills: ["garbage"], agents: [] };
-  assert.equal(isDeclared({ kind: "skill", id: "docs" }, { url: "https://h/a.git", ref: "main" }, lists), false);
+  assert.equal(
+    declarationState({ kind: "skill", id: "docs" }, { url: "https://h/a.git", ref: "main" }, lists),
+    "absent",
+  );
 });
 test("a repository label is short enough to leave the title room", () => {
   assert.equal(

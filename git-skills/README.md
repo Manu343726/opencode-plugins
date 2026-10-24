@@ -44,6 +44,20 @@ ask to *adopt* it, and an adopted entry records where it came from so drift can 
 - The URL is anything git accepts: `https://`, `ssh://`, an scp-like `git@host:path`, or a local
   path.
 
+An item is a plain reference string while it is **enabled** — the implicit `enabled: true` — and
+an object once it is turned off, so the state lives with the item instead of in a second list that
+could disagree with the first:
+
+```jsonc
+"skills": [
+  "homelable-docs@ssh://git@forgejo:2222/homelab/Homelab.git:main",
+  { "reference": "system-monitoring@ssh://git@forgejo:2222/homelab/Homelab.git:main", "enabled": false }
+]
+```
+
+A disabled reference is listed and not loaded: it costs no clone, and turning it back on is one edit
+— the string form is written back, so the file stays compact.
+
 The split is unambiguous because a git ref cannot contain `:`. The id ends at the first `@`;
 after the scheme, the first `:` that appears after a `/` starts the ref; a colon before any `/`
 belongs to the host or to the scp-like form. So `reviewer@ssh://git@host:2222/x.git:main` splits
@@ -138,12 +152,15 @@ tabs. `tab` moves between them, `esc` closes it, and each tab has its own search
 
 | Tab | Shows | Keys |
 |---|---|---|
-| **Catalog** | every entry in the known repositories, with what the project has already enabled | `enter` enable · `ctrl+a` adopt · `tab` project |
-| **Project** | what the project actually uses: declared references and adopted copies, each with its state | `ctrl+u` update · `ctrl+d` disable or delete · `tab` catalog |
+| **Catalog** | every entry in the known repositories, marked as enabled, disabled or absent | `enter` enable · `ctrl+a` adopt · `tab` project |
+| **Project** | the references the project declares and the copies it owns, each with its state | `ctrl+u` update · `ctrl+d` enable/disable · `ctrl+x` delete · `tab` catalog |
 
-*Enable* adds the reference to the project's configuration; *disable* removes it. On an adopted
-copy, `ctrl+d` deletes the copy instead, and `ctrl+u` refreshes it from the repository. Adopting
-refuses when the id already exists in the project as a hand-written file — that file is the
+*Disable* keeps the reference and flips `enabled` to `false` on the item; *enable* flips it back and
+writes the compact string. *Delete* removes the item from the configuration entirely. On an adopted
+copy there is no reference to keep, so `ctrl+d` deletes the copy and `ctrl+u` refreshes it from the
+repository.
+
+Adopting refuses when the id already exists in the project as a hand-written file — that file is the
 project's, and replacing it with a copy of the repository's version would be a surprise, not a
 feature.
 

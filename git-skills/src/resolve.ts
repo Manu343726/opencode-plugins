@@ -13,10 +13,11 @@ import { defaultCacheDir, ensureCheckout } from "./git.ts";
 import { existingDefinition, listAdopted } from "./adopt.ts";
 import { canonicalize, splitFrontmatter } from "./provenance.ts";
 import { SpecError, formatSpec, parseReference, type Kind, type Spec } from "./ref.ts";
+import { parseItems, toItem, type Item, type ItemInput } from "./items.ts";
 
 export interface Options {
-  readonly skills?: readonly string[];
-  readonly agents?: readonly string[];
+  readonly skills?: readonly ItemInput[];
+  readonly agents?: readonly ItemInput[];
   readonly repos?: readonly string[];
   readonly cacheDir?: string;
   readonly ttlMinutes?: number;
@@ -47,7 +48,7 @@ export interface Resolved {
 
 export interface Skipped {
   readonly spec: Spec;
-  readonly reason: "already-adopted" | "defined-in-project";
+  readonly reason: "already-adopted" | "defined-in-project" | "disabled";
   readonly detail: string;
 }
 
@@ -62,6 +63,7 @@ export interface Resolution {
 interface Tagged {
   readonly kind: Kind;
   readonly spec: Spec;
+  readonly enabled: boolean;
 }
 
 function stringList(value: unknown): string[] {
@@ -85,8 +87,8 @@ export function readOptions(raw: Readonly<Record<string, unknown>>): {
   }
   return {
     options: {
-      skills: stringList(raw.skills),
-      agents: stringList(raw.agents),
+      skills: parsed(raw.skills, "skills", problems),
+      agents: parsed(raw.agents, "agents", problems),
       repos: stringList(raw.repos),
       cacheDir: typeof cacheDir === "string" ? cacheDir : undefined,
       ttlMinutes: typeof ttl === "number" ? ttl : undefined,
@@ -97,12 +99,19 @@ export function readOptions(raw: Readonly<Record<string, unknown>>): {
   };
 }
 
-function parseAll(kind: Kind, values: readonly string[], problems: string[]): Tagged[] {
+function parsed(value: unknown, key: string, problems: string[]): readonly Item[] {
+  const { items, problems: itemProblems } = parseItems(value);
+  for (const problem of itemProblems) problems.push(`options.${key}: ${problem}`);
+  return items;
+}
+
+function parseAll(kind: Kind, values: readonly Item[], problems: string[]): Tagged[] {
   const tagged: Tagged[] = [];
   const key = kind === "skill" ? "skills" : "agents";
-  for (const value of values) {
+  for (const item of values) {
     try {
-      tagged.push({ kind, spec: parseReference(kind, value) });
+      const spec = parseReference(kind, item.reference);
+      tagged.push({ kind, spec, enabled: item.enabled });
     } catch (error) {
       const message = error instanceof SpecError ? error.message : String(error);
       problems.push(`options.${key}: ${message}`);
@@ -124,15 +133,22 @@ export async function resolve(projectDir: string, raw: Options): Promise<Resolut
   const skipped: Skipped[] = [];
 
   const tagged = [
-    ...parseAll("skill", raw.skills ?? [], problems),
-    ...parseAll("agent", raw.agents ?? [], problems),
+    ...parseAll("skill", (raw.skills ?? []).map(toItem), problems),
+    ...parseAll("agent", (raw.agents ?? []).map(toItem), problems),
   ];
+
+
 
   const cacheDir = raw.cacheDir ?? defaultCacheDir();
   const ttlMs = (raw.ttlMinutes ?? 5) * 60_000;
 
+  // Only the enabled references need a checkout: a disabled one is listed in
+  // the configuration, not loaded, so cloning it would be work for nothing.
   const wanted = new Map<string, { url: string; ref: string }>();
-  for (const { spec } of tagged) wanted.set(`${spec.url}\0${spec.ref}`, { url: spec.url, ref: spec.ref });
+  for (const { spec, enabled } of tagged) {
+    if (!enabled) continue;
+    wanted.set(`${spec.url}\0${spec.ref}`, { url: spec.url, ref: spec.ref });
+  }
 
   const checkouts = new Map<string, Repository>();
   await Promise.all(
@@ -160,9 +176,15 @@ export async function resolve(projectDir: string, raw: Options): Promise<Resolut
 
   const entries: Resolved[] = [];
 
-  for (const { kind, spec } of tagged) {
+  for (const { kind, spec, enabled } of tagged) {
     const repository = checkouts.get(`${spec.url}\0${spec.ref}`);
     const label = formatSpec(spec);
+
+    if (!enabled) {
+      skipped.push({ spec, reason: "disabled", detail: label });
+      continue;
+    }
+
 
     if (!repository || repository.commit === "") {
       problems.push(`${label}: repository is not available`);

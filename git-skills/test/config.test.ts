@@ -8,6 +8,7 @@ import {
   findEntries,
   readLists,
   removeFromList,
+  setEnabled,
 } from "../src/config.ts";
 import { parse as parseJsonc } from "jsonc-parser";
 
@@ -101,8 +102,8 @@ test("readLists reads both kinds from the project config", async () => {
   await writeFiles(project, { "opencode.jsonc": text });
 
   const lists = await readLists(project);
-  assert.deepEqual(lists.skills, ["a@https://h/x.git"]);
-  assert.deepEqual(lists.agents, ["b@https://h/x.git"]);
+  assert.deepEqual(lists.skills, [{ reference: "a@https://h/x.git", enabled: true }]);
+  assert.deepEqual(lists.agents, [{ reference: "b@https://h/x.git", enabled: true }]);
   assert.deepEqual(lists.repos, []);
   assert.match(lists.file ?? "", /opencode\.jsonc$/);
 });
@@ -114,7 +115,12 @@ test("readLists tolerates a project with no config", async () => {
   const previous = process.env.OPENCODE_CONFIG_DIR;
   process.env.OPENCODE_CONFIG_DIR = empty;
   try {
-    assert.deepEqual(await readLists(project), { skills: [], agents: [], repos: [] });
+    assert.deepEqual(await readLists(project), {
+      skills: [],
+      agents: [],
+      repos: [],
+      problems: [],
+    });
   } finally {
     if (previous === undefined) delete process.env.OPENCODE_CONFIG_DIR;
     else process.env.OPENCODE_CONFIG_DIR = previous;
@@ -149,7 +155,7 @@ test("a bundled installation is read from the nested options", async () => {
   await writeFiles(project, { "opencode.jsonc": BUNDLED });
 
   const lists = await readLists(project);
-  assert.deepEqual(lists.skills, ["a@https://h/x.git"]);
+  assert.deepEqual(lists.skills, [{ reference: "a@https://h/x.git", enabled: true }]);
   assert.deepEqual(lists.agents, []);
 });
 
@@ -188,7 +194,7 @@ test("a globally installed plugin is found when the project declares nothing", a
     const file = await findConfigFile(project);
     assert.match(file ?? "", /opencode\.jsonc$/);
     const lists = await readLists(project);
-    assert.deepEqual(lists.skills, ["a@https://h/x.git"]);
+    assert.deepEqual(lists.skills.map((item) => item.reference), ["a@https://h/x.git"]);
   } finally {
     if (previous === undefined) delete process.env.OPENCODE_CONFIG_DIR;
     else process.env.OPENCODE_CONFIG_DIR = previous;
@@ -205,9 +211,53 @@ test("the project's own config wins over the global one", async () => {
   process.env.OPENCODE_CONFIG_DIR = global;
   try {
     const lists = await readLists(project);
-    assert.deepEqual(lists.skills, ["local@https://h/y.git"]);
+    assert.deepEqual(lists.skills.map((item) => item.reference), ["local@https://h/y.git"]);
   } finally {
     if (previous === undefined) delete process.env.OPENCODE_CONFIG_DIR;
     else process.env.OPENCODE_CONFIG_DIR = previous;
   }
+});
+
+test("disabling keeps the reference and only flips its state", () => {
+  const text = addToList(BASE, "skills", "a@https://h/x.git");
+  const off = setEnabled(text, "skills", "a@https://h/x.git", false);
+
+  const parsed = parseJsonc(off) as {
+    plugins: Array<{ options: Record<string, unknown> }>;
+  };
+  const skills = parsed.plugins[0]?.options.skills as unknown[];
+  assert.deepEqual(skills, [{ reference: "a@https://h/x.git", enabled: false }]);
+  assert.match(off, /\/\/ a comment that has to survive/);
+});
+
+test("enabling writes the compact string back", () => {
+  const text = addToList(BASE, "skills", "a@https://h/x.git");
+  const off = setEnabled(text, "skills", "a@https://h/x.git", false);
+  const on = setEnabled(off, "skills", "a@https://h/x.git", true);
+
+  const parsed = parseJsonc(on) as { plugins: Array<{ options: Record<string, unknown> }> };
+  assert.deepEqual(parsed.plugins[0]?.options.skills, ["a@https://h/x.git"]);
+});
+
+test("an item reads back with the state it was written with", async () => {
+  const project = await tmpdir("ogs-project-");
+  const text = setEnabled(addToList(BASE, "skills", "a@https://h/x.git"), "skills", "a@https://h/x.git", false);
+  await writeFiles(project, { "opencode.jsonc": text });
+
+  const lists = await readLists(project);
+  assert.deepEqual(lists.skills, [{ reference: "a@https://h/x.git", enabled: false }]);
+});
+
+test("removing a disabled item removes the object, not a twin", () => {
+  const text = setEnabled(addToList(BASE, "skills", "a@https://h/x.git"), "skills", "a@https://h/x.git", false);
+  const next = removeFromList(text, "skills", "a@https://h/x.git");
+  const parsed = parseJsonc(next) as { plugins: Array<{ options: Record<string, unknown> }> };
+  assert.deepEqual(parsed.plugins[0]?.options.skills, []);
+});
+
+test("adding an already disabled item does not duplicate it", () => {
+  const text = setEnabled(addToList(BASE, "skills", "a@https://h/x.git"), "skills", "a@https://h/x.git", false);
+  const again = addToList(text, "skills", "a@https://h/x.git");
+  const parsed = parseJsonc(again) as { plugins: Array<{ options: Record<string, unknown> }> };
+  assert.equal((parsed.plugins[0]?.options.skills as unknown[]).length, 1);
 });

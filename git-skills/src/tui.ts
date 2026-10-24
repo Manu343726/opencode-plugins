@@ -19,7 +19,7 @@ import {
   adoptedChoice,
   decode,
   encode,
-  isDeclared,
+  declarationState,
   knownTargets,
   shortLabel,
   type Choice,
@@ -35,10 +35,11 @@ import {
   STATE_LABEL,
   type State,
 } from "./adopt.ts";
-import { addToList, readConfig, readLists, removeFromList, writeConfig } from "./config.ts";
+import { addToList, readConfig, readLists, removeFromList, setEnabled, writeConfig } from "./config.ts";
 import { discover, findEntry, type Entry } from "./discover.ts";
 import { ensureCheckout } from "./git.ts";
-import { formatSpec, parseSpec, type Kind, type Spec } from "./ref.ts";
+import { formatSpec, parseSpec, type Spec } from "./ref.ts";
+import type { Item } from "./items.ts";
 import { Plugin } from "@opencode/plugin/tui";
 
 export const PANEL = "git-skills.browser";
@@ -85,17 +86,18 @@ async function scanAll(targets: readonly Target[]): Promise<Scan[]> {
 function rowsForCatalog(
   scans: readonly Scan[],
   adoptedIds: ReadonlySet<string>,
-  lists: { skills: readonly string[]; agents: readonly string[] },
+  lists: { skills: readonly Item[]; agents: readonly Item[] },
 ): Row[] {
   const rows: Row[] = [];
   for (const scan of scans) {
     const target = { url: scan.url, ref: scan.ref };
     for (const entry of scan.entries) {
       if (adoptedIds.has(`${entry.kind}:${entry.id}`)) continue;
-      const declared = isDeclared(entry, target, lists);
+      const state = declarationState(entry, target, lists);
+      const prefix = state === "enabled" ? "enabled — " : state === "disabled" ? "disabled — " : "";
       rows.push({
         title: `${entry.kind} ${entry.id}`,
-        description: `${declared ? "enabled — " : ""}${entry.description ?? entry.origin}`,
+        description: `${prefix}${entry.description ?? entry.origin}`,
         category: shortLabel(target),
         value: encode({
           kind: entry.kind,
@@ -113,7 +115,7 @@ function rowsForCatalog(
 async function rowsForProject(
   scans: readonly Scan[],
   projectDir: string,
-  lists: { skills: readonly string[]; agents: readonly string[] },
+  lists: { skills: readonly Item[]; agents: readonly Item[] },
 ): Promise<Row[]> {
   const rows: Row[] = [];
   const adopted = await listAdopted(projectDir);
@@ -137,26 +139,46 @@ async function rowsForProject(
     });
   }
 
-  for (const [kind, values] of [
+  for (const [kind, items] of [
     ["skill", lists.skills],
     ["agent", lists.agents],
   ] as const) {
-    for (const text of values) {
+    for (const item of items) {
       let spec: Spec;
       try {
-        spec = parseSpec(text);
+        spec = parseSpec(item.reference);
       } catch {
-        rows.push({ title: `${kind} ${text}`, description: "malformed reference", category: "declared", value: "" });
+        rows.push({
+          title: `${kind} ${item.reference}`,
+          description: "malformed reference",
+          category: "declared",
+          value: "",
+        });
         continue;
       }
       if (adopted.some((item) => item.kind === kind && item.id === spec.id)) continue;
+
+      const off = !item.enabled;
       const scan = scans.find((candidate) => candidate.url === spec.url && candidate.ref === spec.ref);
       const entry = scan ? findEntry({ entries: scan.entries, problems: [] }, kind, spec.id) : undefined;
+      const state = off
+        ? "disabled · kept in the configuration"
+        : entry
+          ? "enabled · from the repository"
+          : "enabled · not found in the repository";
+
       rows.push({
         title: `${kind} ${spec.id}`,
-        description: entry ? "enabled · from the repository" : "enabled · not found in the repository",
+        description: state,
         category: shortLabel({ url: spec.url, ref: spec.ref }),
-        value: encode({ kind, id: spec.id, url: spec.url, ref: spec.ref, adopted: false }),
+        value: encode({
+          kind,
+          id: spec.id,
+          url: spec.url,
+          ref: spec.ref,
+          adopted: false,
+          ...(off ? { disabled: true } : {}),
+        }),
       });
     }
   }
@@ -237,8 +259,20 @@ export default Plugin.define({
                 }
               : {
                   bind: "ctrl+d",
-                  title: "Disable",
-                  onTrigger: (value) => void disable(decode(String(value))),
+                  title: "Disable/Enable",
+                  onTrigger: (value) => void toggle(decode(String(value))),
+                },
+            view === "catalog"
+              ? {
+                  bind: "ctrl+r",
+                  title: "Refresh",
+                  selection: "none",
+                  onTrigger: () => void browse(),
+                }
+              : {
+                  bind: "ctrl+x",
+                  title: "Delete",
+                  onTrigger: (value) => void remove(decode(String(value))),
                 },
             {
               bind: "tab",
@@ -286,17 +320,23 @@ export default Plugin.define({
       const key = choice.kind === "skill" ? "skills" : "agents";
       const reference = formatSpec({ id: choice.id, url: choice.url, ref: choice.ref });
       const text = await readConfig(file);
-      const next = addToList(text, key, reference);
-      if (next === text) {
-        toast(`${choice.kind} ${choice.id} is already enabled`);
-        return;
-      }
-      await writeConfig(file, next);
-      toast(`${choice.kind} ${choice.id} enabled`, "success");
+      const withReference = addToList(text, key, reference);
+      const next = setEnabled(withReference, key, reference, true);
+      if (next !== text) await writeConfig(file, next);
+      toast(
+        next === text ? `${choice.kind} ${choice.id} is already enabled` : `${choice.kind} ${choice.id} enabled`,
+        next === text ? "info" : "success",
+      );
     }
 
-    async function disable(choice: Choice | undefined): Promise<void> {
+    /**
+     * Turns a declared reference off without losing it: the entry stays in
+     * `skills`/`agents` and is listed under `disabled`, which the loader skips.
+     * An adopted copy has no reference to keep, so this deletes the copy.
+     */
+    async function toggle(choice: Choice | undefined): Promise<void> {
       if (!choice) return;
+
       if (choice.adopted) {
         const item = (await listAdopted(projectDir())).find(
           (candidate) => candidate.kind === choice.kind && candidate.id === choice.id,
@@ -305,18 +345,42 @@ export default Plugin.define({
         toast(`${choice.kind} ${choice.id} deleted`, "success");
         return;
       }
+
       const file = (await readLists(projectDir())).file;
-      if (!file) return;
-      const key = choice.kind === "skill" ? "skills" : "agents";
-      const reference = formatSpec({ id: choice.id, url: choice.url, ref: choice.ref });
-      const text = await readConfig(file);
-      const next = removeFromList(text, key, reference);
-      if (next === text) {
-        toast(`${choice.kind} ${choice.id} was not enabled`);
+      if (!file) {
+        toast("No configuration file to edit", "error");
         return;
       }
-      await writeConfig(file, next);
-      toast(`${choice.kind} ${choice.id} disabled`, "success");
+
+      const reference = formatSpec({ id: choice.id, url: choice.url, ref: choice.ref });
+      const text = await readConfig(file);
+      const next = setEnabled(text, choice.kind === "skill" ? "skills" : "agents", reference, choice.disabled === true);
+      if (next !== text) await writeConfig(file, next);
+      toast(
+        `${choice.kind} ${choice.id} ${choice.disabled ? "enabled" : "disabled"}`,
+        next === text ? "info" : "success",
+      );
+    }
+
+    /** Removes the reference from the project entirely, and any copy of it. */
+    async function remove(choice: Choice | undefined): Promise<void> {
+      if (!choice) return;
+
+      const file = (await readLists(projectDir())).file;
+      if (!file) return;
+
+      const key = choice.kind === "skill" ? "skills" : "agents";
+      const reference = formatSpec({ id: choice.id, url: choice.url, ref: choice.ref });
+      const text = removeFromList(await readConfig(file), key, reference);
+      await writeConfig(file, text);
+
+      if (choice.adopted) {
+        const item = (await listAdopted(projectDir())).find(
+          (candidate) => candidate.kind === choice.kind && candidate.id === choice.id,
+        );
+        if (item) await removeAdopted(item);
+      }
+      toast(`${choice.kind} ${choice.id} removed from the project`, "success");
     }
 
     async function adopt(choice: Choice | undefined): Promise<void> {

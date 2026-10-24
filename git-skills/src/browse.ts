@@ -7,6 +7,7 @@
  */
 
 import { parseSpec, type Kind } from "./ref.ts";
+import { toItem, type Item, type ItemInput } from "./items.ts";
 
 export interface Choice {
   readonly kind: Kind;
@@ -14,6 +15,8 @@ export interface Choice {
   readonly url: string;
   readonly ref: string;
   readonly adopted: boolean;
+  /** Declared in the project but turned off: still listed, not loaded. */
+  readonly disabled?: boolean;
 }
 
 export interface Target {
@@ -45,6 +48,7 @@ export function decode(value: string): Choice | undefined {
     url: candidate.url,
     ref: candidate.ref,
     adopted: candidate.adopted === true,
+    ...(candidate.disabled === true ? { disabled: true } : {}),
   };
 }
 
@@ -56,8 +60,8 @@ export function decode(value: string): Choice | undefined {
  * when it resolves, and the browser should still open.
  */
 export function knownTargets(lists: {
-  readonly skills: readonly string[];
-  readonly agents: readonly string[];
+  readonly skills: readonly ItemInput[];
+  readonly agents: readonly ItemInput[];
   readonly repos: readonly string[];
 }): Target[] {
   const targets = new Map<string, Target>();
@@ -70,8 +74,8 @@ export function knownTargets(lists: {
     }
   };
 
-  for (const text of lists.skills) add(text);
-  for (const text of lists.agents) add(text);
+  for (const item of lists.skills) add(toItem(item).reference);
+  for (const item of lists.agents) add(toItem(item).reference);
   // A bare repository has no reference of its own, so it is browsed on the
   // default branch.
   for (const url of lists.repos) targets.set(`${url}\0main`, { url, ref: "main" });
@@ -87,6 +91,32 @@ export function knownTargets(lists: {
  * repository, so updating it answered "the entry is not in the repository any
  * more" — measured, and the reason this function exists.
  */
+/**
+ * Whether an entry is declared in the configuration, and whether it is on.
+ *
+ * `absent` is not a state of the project: it means the catalog row is only in
+ * the repository. `disabled` is the interesting one — the reference is kept,
+ * with `enabled: false` on the item itself, so re-enabling it is one edit.
+ */
+export function declarationState(
+  entry: { kind: Kind; id: string },
+  target: Target,
+  lists: { readonly skills: readonly ItemInput[]; readonly agents: readonly ItemInput[] },
+): "enabled" | "disabled" | "absent" {
+  const items = (entry.kind === "skill" ? lists.skills : lists.agents).map(toItem);
+  for (const item of items) {
+    try {
+      const spec = parseSpec(item.reference);
+      if (spec.id === entry.id && spec.url === target.url && spec.ref === target.ref) {
+        return item.enabled ? "enabled" : "disabled";
+      }
+    } catch {
+      // a malformed entry is not a match
+    }
+  }
+  return "absent";
+}
+
 export function adoptedChoice(kind: Kind, id: string, provenanceID: string): Choice {
   try {
     const spec = parseSpec(provenanceID);
@@ -96,21 +126,7 @@ export function adoptedChoice(kind: Kind, id: string, provenanceID: string): Cho
   }
 }
 
-/** Whether a reference in the configuration already points at this entry. */
-export function isDeclared(entry: { kind: Kind; id: string }, target: Target, lists: {
-  readonly skills: readonly string[];
-  readonly agents: readonly string[];
-}): boolean {
-  const values = entry.kind === "skill" ? lists.skills : lists.agents;
-  return values.some((text) => {
-    try {
-      const spec = parseSpec(text);
-      return spec.id === entry.id && spec.url === target.url && spec.ref === target.ref;
-    } catch {
-      return false;
-    }
-  });
-}
+
 /**
  * A short label for a repository, for a row where the width is shared.
  *

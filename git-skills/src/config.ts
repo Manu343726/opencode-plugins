@@ -14,6 +14,15 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { applyEdits, modify, parse, type ParseError, printParseErrorCode } from "jsonc-parser";
 
+import { parseItems, storedForm, type Item } from "./items.ts";
+
+/**
+ * A list item is a reference string when it is enabled, which is the implicit
+ * `enabled: true` this plugin assumes everywhere: `"a@url:ref"` and
+ * `{ "reference": "a@url:ref", "enabled": true }` are the same item, and the
+ * second form is never written — only the object that turns something off is.
+ */
+
 /** How the plugin recognises its own entry in `plugins`. */
 export const PACKAGE_NAME = "opencode-git-skills";
 
@@ -193,7 +202,10 @@ function apply(text: string, pathToValue: (string | number)[], value: unknown): 
   return applyEdits(text, edits);
 }
 
-function newEntry(listKey: ListKey, value: string): Record<string, unknown> {
+function newEntry(
+  listKey: ListKey,
+  value: string | { reference: string; enabled: false },
+): Record<string, unknown> {
   return { package: PACKAGE_NAME, options: { [listKey]: [value] } };
 }
 
@@ -203,7 +215,7 @@ function newEntry(listKey: ListKey, value: string): Record<string, unknown> {
  * When the project has no entry for the plugin yet, the entry is appended with
  * the value already in it, so one call is enough to start using a repository.
  */
-export function addToList(text: string, listKey: ListKey, value: string): string {
+export function addToList(text: string, listKey: ListKey, value: string | { reference: string; enabled: false }): string {
   const found = locate(text);
 
   if (!found) {
@@ -223,9 +235,17 @@ export function addToList(text: string, listKey: ListKey, value: string): string
       : ["plugins", found.index, "options", found.scope.key, listKey];
 
   const current = found.scope.values[listKey];
-  if (Array.isArray(current) && current.includes(value)) return text;
-  if (Array.isArray(current)) return apply(text, [...path, -1], value);
-  return apply(text, path, [value]);
+  const existing = Array.isArray(current) ? current : [];
+
+  const wanted = typeof value === "string" ? value : value.reference;
+  const index = existing.findIndex((entry) =>
+    typeof entry === "string" ? entry === wanted : entry?.reference === wanted,
+  );
+  if (index >= 0) {
+    // Present already: the only thing that may change is its state.
+    return apply(text, [...path, index], value);
+  }
+  return apply(text, [...path, -1], value);
 }
 
 /** Removes a value from one of the plugin's lists, leaving the rest untouched. */
@@ -234,7 +254,9 @@ export function removeFromList(text: string, listKey: ListKey, value: string): s
   if (!found) return text;
   const current = found.scope.values[listKey];
   if (!Array.isArray(current)) return text;
-  const index = current.indexOf(value);
+  const index = current.findIndex((entry) =>
+    typeof entry === "string" ? entry === value : entry?.reference === value,
+  );
   if (index < 0) return text;
 
   const path =
@@ -260,20 +282,26 @@ export async function writeConfig(file: string, text: string): Promise<void> {
 /** Reads the plugin's lists from a project, tolerating every absence. */
 export async function readLists(projectDir: string): Promise<{
   file?: string;
-  skills: string[];
-  agents: string[];
+  skills: Item[];
+  agents: Item[];
   repos: string[];
+  problems: string[];
 }> {
   const file = await findConfigFile(projectDir);
-  if (!file) return { skills: [], agents: [], repos: [] };
+  if (!file) return { skills: [], agents: [], repos: [], problems: [] };
   const text = await readConfig(file);
   const found = locate(text);
   const values = found?.scope.values ?? {};
-  const list = (key: ListKey): string[] => {
-    const value = values[key];
-    return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+  const problems: string[] = [];
+  const items = (key: "skills" | "agents"): Item[] => {
+    const parsed = parseItems(values[key]);
+    for (const problem of parsed.problems) problems.push(`${key}: ${problem}`);
+    return [...parsed.items];
   };
-  return { file, skills: list("skills"), agents: list("agents"), repos: list("repos") };
+  const repos = Array.isArray(values.repos)
+    ? values.repos.filter((item): item is string => typeof item === "string")
+    : [];
+  return { file, skills: items("skills"), agents: items("agents"), repos, problems };
 }
 
 /** Applies one edit to the project's configuration file. */
@@ -289,4 +317,30 @@ export async function editList(
     action === "add" ? addToList(text, listKey, value) : removeFromList(text, listKey, value);
   if (next !== text) await writeConfig(file, next);
   return { file, text: next };
+}
+
+/**
+ * Sets the enabled state of a reference that is already in the list.
+ *
+ * Enabling writes the plain string back — the compact form every existing
+ * configuration uses — and disabling writes the object, so the file stays
+ * readable and the state cannot drift from the item it belongs to.
+ */
+export function setEnabled(text: string, listKey: "skills" | "agents", reference: string, enabled: boolean): string {
+  const found = locate(text);
+  if (!found) return text;
+  const current = found.scope.values[listKey];
+  if (!Array.isArray(current)) return text;
+
+  const index = current.findIndex((entry) =>
+    typeof entry === "string" ? entry === reference : entry?.reference === reference,
+  );
+  if (index < 0) return text;
+
+  const path =
+    found.scope.key === null
+      ? ["plugins", found.index, "options", listKey]
+      : ["plugins", found.index, "options", found.scope.key, listKey];
+
+  return apply(text, [...path, index], storedForm({ reference, enabled }));
 }
