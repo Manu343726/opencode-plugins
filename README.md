@@ -13,6 +13,7 @@ reaches the others.
 | Plugin | What it does | Status |
 |---|---|---|
 | [`git-skills`](git-skills/README.md) | Uses git repositories as per-project sources of skills and agents: declares `<id>@<url>:<ref>` references, registers them at startup, and can adopt an entry into the project with its provenance so drift is detectable | in use |
+| [`subagent-monitor`](subagent-monitor/README.md) | Shows the agents working in the current session in the side panel: running first, with elapsed time, and finished ones marked done | new |
 
 ## Consuming a plugin
 
@@ -55,6 +56,7 @@ That path form is what the tests use; the bundle is what projects use.
 
 ```
 index.ts              the entrypoint: activates the plugins named in the configuration
+tui.ts                the same for the terminal half, loaded from a project's plugins dir
 package.json          one install, with the dependencies every plugin needs
 git-skills/
   README.md           what the plugin does and how it is configured
