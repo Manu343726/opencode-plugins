@@ -12,6 +12,8 @@ import { createMemo, createSignal, onCleanup } from "solid-js";
 
 import { Plugin, usePlugin } from "@opencode/plugin/tui";
 
+import { readPluginOptions } from "../git-skills/src/config.ts";
+
 import {
   STATUS_LABEL,
   agentRows,
@@ -280,20 +282,18 @@ function SidebarBody(props: { sessionID: string; ttlMs: number; view: View }) {
 export default Plugin.define({
   id: "subagent-monitor",
 
-  setup(context) {
+  async setup(context) {
     // A plugin file under `.opencode/plugins/` is discovered by the server
     // runner as well, and that context has no terminal.
     const terminal = context as unknown as { keymap?: { layer?: unknown } };
     if (typeof terminal.keymap?.layer !== "function") return;
 
-    const ttlMs = finishedTtlMs(context as unknown as { options?: Record<string, unknown> });
-    const view = viewOf(context.options as Record<string, unknown> | undefined);
-    try {
-      require("node:fs").appendFileSync(
-        "/tmp/opencode/view.log",
-        `options=${JSON.stringify(context.options)} view=${view}\n`,
-      );
-    } catch {}
+    // The terminal half receives no options from the host; they are read from the
+    // project's configuration, which is where they are declared.
+    const directory = context.location?.directory ?? process.cwd();
+    const settings = await readPluginOptions(directory);
+    const ttlMs = finishedTtlMs({ options: settings });
+    const view = viewOf(settings);
 
     const unclaim = context.ui.slot({
       append: "sidebar.content",

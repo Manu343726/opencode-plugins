@@ -439,3 +439,25 @@ export async function projectDeclaresPlugin(projectDir: string): Promise<string 
   const text = await readConfig(file);
   return locate(text) === undefined ? undefined : file;
 }
+
+/**
+ * This plugin's own options, read from the configuration on disk.
+ *
+ * The terminal half is loaded by the CLI from `exports["./tui"]`, and it receives
+ * an **empty** options object: measured, with \`options={}\` logged from a project
+ * whose entry declares \`{ view: "agents" }\`. The server half gets the entry's
+ * options; the terminal half has to read them, which is what this does — the
+ * project's file over the machine's, the same merge the content follows.
+ */
+export async function readPluginOptions(projectDir: string): Promise<Record<string, unknown>> {
+  const files = [await findGlobalConfigFile(), await findProjectConfigFile(projectDir)];
+  const merged: Record<string, unknown> = {};
+
+  for (const file of files) {
+    if (!file) continue;
+    const found = locate(await readConfig(file));
+    if (!found) continue;
+    Object.assign(merged, found.scope.values);
+  }
+  return merged;
+}
