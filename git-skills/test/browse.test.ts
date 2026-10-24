@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { decode, encode, isDeclared, knownTargets, type Choice } from "../src/browse.ts";
+import { decode, encode, isDeclared, knownTargets, shortLabel, type Choice } from "../src/browse.ts";
 
 const choice: Choice = {
   kind: "agent",
@@ -71,4 +71,12 @@ test("an entry already in the config is recognised", () => {
 test("a malformed declaration is not mistaken for a match", () => {
   const lists = { skills: ["garbage"], agents: [] };
   assert.equal(isDeclared({ kind: "skill", id: "docs" }, { url: "https://h/a.git", ref: "main" }, lists), false);
+});
+test("a repository label is short enough to leave the title room", () => {
+  assert.equal(
+    shortLabel({ url: "ssh://git@forgejo:2222/homelab/Homelab.git", ref: "main" }),
+    "Homelab@main",
+  );
+  assert.equal(shortLabel({ url: "https://git.example/a/b/skills", ref: "v1.2.0" }), "skills@v1.2.0");
+  assert.equal(shortLabel({ url: "git@host:org/repo.git", ref: "main" }), "repo@main");
 });

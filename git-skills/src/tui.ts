@@ -13,7 +13,7 @@ import { adoptEntry, listAdopted, removeAdopted, remoteDigest, snapshot, STATE_L
 import { addToList, readConfig, readLists, removeFromList, writeConfig } from "./config.ts";
 import { discover, findEntry, type Entry } from "./discover.ts";
 import { ensureCheckout } from "./git.ts";
-import { encode, decode, isDeclared, knownTargets, type Choice } from "./browse.ts";
+import { encode, decode, isDeclared, knownTargets, shortLabel, type Choice } from "./browse.ts";
 import { formatSpec, parseSpec, type Spec } from "./ref.ts";
 
 interface RepoScan {
@@ -134,7 +134,7 @@ export default Plugin.define({
               adopted: false,
             }),
             description: `${declared ? "in config — " : ""}${entry.description ?? entry.origin}`,
-            category: `${repo.url}@${repo.ref}`,
+            category: shortLabel({ url: repo.url, ref: repo.ref }),
           });
         }
         if (repo.warning) toast(repo.warning, "error");

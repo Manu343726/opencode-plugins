@@ -94,3 +94,21 @@ export function isDeclared(entry: { kind: Kind; id: string }, target: Target, li
     }
   });
 }
+/**
+ * A short label for a repository, for a row where the width is shared.
+ *
+ * The dialog sizes the title column from what is left after the category, so a
+ * full clone url as the category squeezes every title to a few characters —
+ * measured: "skill homelab-control-dev" rendered as "skil" beside
+ * "ssh://git@forgejo:2222/homelab/Homelab.git@main".
+ */
+export function shortLabel(target: Target): string {
+  const withoutScheme = target.url.replace(/^[a-z+]+:\/\//i, "");
+  const afterHost = withoutScheme.includes("/")
+    ? withoutScheme.slice(withoutScheme.indexOf("/") + 1)
+    : withoutScheme;
+  const parts = afterHost.split("/").filter((part) => part !== "");
+  const repo = parts.at(-1) ?? withoutScheme;
+  const bare = repo.endsWith(".git") ? repo.slice(0, -4) : repo;
+  return `${bare}@${target.ref}`;
+}
