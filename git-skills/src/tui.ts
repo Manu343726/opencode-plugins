@@ -194,11 +194,16 @@ async function projectRows(data: Data, projectDir: string): Promise<Row[]> {
 const LINE = (row: Row, selected: boolean): string =>
   `${selected ? "▸" : " "} ${row.title}  ${"·"}  ${row.state}  ${"·"}  ${row.group}`;
 
-function Browser(props: { context: Context; directory: string; done: () => void }) {
+function Browser(props: {
+  context: Context;
+  directory: string;
+  initial: Data;
+  done: () => void;
+}) {
   const [view, setView] = createSignal<View>("catalog");
   const [query, setQuery] = createSignal("");
   const [selected, setSelected] = createSignal(0);
-  const [data, setData] = createSignal<Data | undefined>(undefined);
+  const [data, setData] = createSignal<Data | undefined>(props.initial);
   const [project, setProject] = createSignal<Row[]>([]);
   const [busy, setBusy] = createSignal(true);
   const [failure, setFailure] = createSignal<string | undefined>(undefined);
@@ -237,11 +242,6 @@ function Browser(props: { context: Context; directory: string; done: () => void 
       setBusy(false);
     }
   };
-
-  // Started here rather than in a lifecycle hook: a dialog has to show
-  // something on its first paint, and `onMount` was not running for this
-  // component — measured: the dialog stayed on "Loading…" with 0 items.
-  void reload();
 
   const all = createMemo<Row[]>(() => {
     const current = data();
@@ -526,10 +526,30 @@ export default Plugin.define({
 
     const projectDir = (): string => context.location?.directory ?? process.cwd();
 
-    const browse = (): void => {
-      void new Promise<void>((resolve) => {
+    /**
+     * The data is loaded before the dialog is shown, in the command's own
+     * context. Loading inside the component did not work: the modal painted its
+     * chrome and stayed on "Loading…" with zero items, with no error and no log
+     * line, while the same load takes 164 ms when called directly.
+     */
+    const browse = async (): Promise<void> => {
+      const directory = projectDir();
+      let initial: Data;
+      try {
+        initial = await load(directory);
+      } catch (error) {
+        void context.ui.toast.show({
+          title: "Git skills",
+          message: `Could not read the repositories: ${String(error)}`,
+          variant: "error",
+          duration: 8000,
+        });
+        return;
+      }
+
+      await new Promise<void>((resolve) => {
         context.ui.dialog.show(
-          () => h(Browser, { context, directory: projectDir(), done: resolve }),
+          () => h(Browser, { context, directory, initial, done: resolve }),
           () => resolve(),
         );
         // The documentation's own order: show, then size the dialog that is open.
@@ -547,7 +567,7 @@ export default Plugin.define({
           group: "Git skills",
           palette: true,
           slash: { name: "git-skills" },
-          run: browse,
+          run: () => void browse(),
         },
       ],
       bindings: ["git-skills.browse"],
