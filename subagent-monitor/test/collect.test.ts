@@ -1,7 +1,15 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { collect, elapsed, prune, statusKind, summary, type SessionsLike } from "../collect.ts";
+import {
+  agentRows,
+  collect,
+  elapsed,
+  prune,
+  statusKind,
+  summary,
+  type SessionsLike,
+} from "../collect.ts";
 
 function fake(children: Array<[string, string, "idle" | "running", number]>): SessionsLike {
   const byId = new Map(children.map(([id, agent, status, created]) => [id, { agent, status, created }]));
@@ -174,4 +182,31 @@ test("a session that never reported an outcome stays unknown", () => {
   const rows = collect(fake([["a", "reviewer", "idle", 1_000]]), "root");
   assert.equal(rows[0]?.outcome, undefined);
   assert.equal(statusKind(rows[0]!.running, rows[0]?.outcome), "unknown");
+});
+
+test("agents are listed with their description and how many tasks they run", () => {
+  const agents = [
+    { id: "verifier", name: "Verifier", description: "Measures builds and reports" },
+    { id: "orchestrator", name: "Orchestrator", description: "Delegates and holds the record" },
+  ];
+  const subagents = collect(
+    fake([
+      ["a", "orchestrator", "running", 1],
+      ["b", "orchestrator", "running", 2],
+      ["c", "verifier", "idle", 3],
+    ]),
+    "root",
+  );
+
+  const rows = agentRows(agents, subagents);
+  assert.deepEqual(rows.map((row) => [row.id, row.running]), [
+    ["orchestrator", 2],
+    ["verifier", 0],
+  ]);
+  assert.equal(rows[0]?.description, "Delegates and holds the record");
+});
+
+test("an agent with no description still lists, named by its id", () => {
+  const rows = agentRows([{ id: "explore" }], []);
+  assert.deepEqual(rows, [{ id: "explore", name: "explore", description: "", running: 0 }]);
 });

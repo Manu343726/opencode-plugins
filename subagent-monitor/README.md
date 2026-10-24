@@ -25,6 +25,10 @@ Subagents · 1 running · 1
   Summarise the changelog
 ```
 
+Under them, **every agent the session can use**, with its description and how busy it is: `idle`, or
+how many tasks are running with it. An agent is busy when a child session of this one is executing
+with it, so the count and the list above never disagree.
+
 Each entry names the agent — in the colour its own definition gives it, the one OpenCode uses in
 its banner — and the task’s title under it. The marker carries the outcome: **blue** while running,
 **green** when it succeeded, **red** when it failed, **orange** when it was interrupted, and the
@@ -69,6 +73,12 @@ Subagents · 1 running · 1 total
   Sleep 90 then report
 ○ explore  ok
   Summarise the changelog
+
+Agents · 15
+● orchestrator  1 running
+  Holds the context and delegates every task…
+○ verifier      idle
+  Measures builds, tests, endpoints and logs…
 ```
 
 and, with a background subagent actually running:

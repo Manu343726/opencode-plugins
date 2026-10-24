@@ -190,3 +190,42 @@ export function statusKind(running: boolean, outcome?: Outcome): StatusKind {
   if (running) return "running";
   return outcome ?? "unknown";
 }
+
+export interface AgentInfoLike {
+  readonly id: string;
+  readonly name?: string;
+  readonly description?: string;
+}
+
+export interface AgentRow {
+  readonly id: string;
+  readonly name: string;
+  readonly description: string;
+  /** How many subagents are running with this agent right now. */
+  readonly running: number;
+}
+
+/**
+ * The agents this session can use, each with what it is for and how busy it is.
+ *
+ * The count comes from the subagents themselves: an agent is "running" when a
+ * child session of this one is executing with it, which is the only thing the
+ * session tree can tell us. Agents with work come first, so the list answers
+ * "who is busy" before "who exists".
+ */
+export function agentRows(
+  agents: readonly AgentInfoLike[],
+  subagents: readonly Row[],
+): AgentRow[] {
+  const rows = agents.map((agent) => ({
+    id: agent.id,
+    name: agent.name ?? agent.id,
+    description: agent.description ?? "",
+    running: subagents.filter((row) => row.running && row.agent === agent.id).length,
+  }));
+
+  return rows.sort((left, right) => {
+    if (left.running !== right.running) return right.running - left.running;
+    return left.id.localeCompare(right.id);
+  });
+}

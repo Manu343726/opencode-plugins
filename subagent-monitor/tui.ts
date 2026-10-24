@@ -12,7 +12,15 @@ import { createMemo, createSignal, onCleanup } from "solid-js";
 
 import { Plugin, usePlugin } from "@opencode/plugin/tui";
 
-import { STATUS_LABEL, collect, elapsed, prune, statusKind, type Row } from "./collect.ts";
+import {
+  STATUS_LABEL,
+  agentRows,
+  collect,
+  elapsed,
+  prune,
+  statusKind,
+  type Row,
+} from "./collect.ts";
 
 /** Keeps a title short enough for a narrow sidebar. */
 function shorten(value: string, max: number): string {
@@ -193,7 +201,44 @@ function SidebarBody(props: { sessionID: string; ttlMs: number }) {
       }),
     );
 
-    return [header, ...items];
+    // The agents this session can use, and how busy each one is. The count comes
+    // from the subagents above: running means a child of this session is
+    // executing with that agent.
+    const agents = context.data.location.agent.list(context.location) ?? [];
+    const available = agentRows(agents, list);
+    const agentItems = available.map((agent) =>
+      h("box", {
+        flexDirection: "column",
+        children: [
+          h("box", {
+            flexDirection: "row",
+            gap: 1,
+            children: [
+              h("text", {
+                fg: agent.running > 0 ? feedback("info") : muted(),
+                children: agent.running > 0 ? "●" : "○",
+              }),
+              h("text", { fg: colorOf(agent.id), children: shorten(agent.id, 14) }),
+              h("text", {
+                fg: agent.running > 0 ? feedback("info") : muted(),
+                children: agent.running > 0 ? `${agent.running} running` : "idle",
+              }),
+            ],
+          }),
+          h("text", {
+            fg: muted(),
+            children: `  ${shorten(agent.description, 40)}`,
+          }),
+        ],
+      }),
+    );
+
+    const agentsHeader = h("text", {
+      fg: muted(),
+      children: `Agents · ${available.length}`,
+    });
+
+    return [header, ...items, agentsHeader, ...agentItems];
   };
 
   return h("box", {
