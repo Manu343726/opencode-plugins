@@ -371,58 +371,64 @@ function Browser(props: {
     if (name === "remove") await remove(row.choice);
   };
 
-  const onKey = (event: { name?: string; ctrl?: boolean; preventDefault?: () => void }): void => {
-    const name = event.name ?? "";
-    const stop = (): void => event.preventDefault?.();
-
-    if (name === "escape") {
-      stop();
-      close();
-      return;
-    }
-    if (name === "tab" || name === "left" || name === "right") {
-      stop();
-      const next: View = view() === "catalog" ? "project" : "catalog";
-      if (name === "left" && view() === "catalog") return;
-      if (name === "right" && view() === "project") return;
+  /**
+   * The keys are bound as a keymap layer, not read from the input's handler.
+   *
+   * The documentation is explicit that a layer created inside a dialog's reactive
+   * computation is disposed with it; the input's `onKeyDown` never saw Tab or the
+   * arrows, which the host keeps for its own navigation — measured: the project
+   * view was unreachable however the key was spelled.
+   */
+  props.context.keymap.layer(() => {
+    const switchTo = (next: View): void => {
       setView(next);
       setSelected(0);
-      return;
-    }
-    if (name === "up") {
-      stop();
-      setSelected((index) => Math.max(0, index - 1));
-      return;
-    }
-    if (name === "down") {
-      stop();
-      setSelected((index) => Math.min(rows().length - 1, index + 1));
-      return;
-    }
-    if (name === "return") {
-      stop();
-      void act("enter");
-      return;
-    }
-    if (!event.ctrl) return;
-
-    const actions: Record<string, "adopt" | "update" | "toggle" | "remove"> = {
-      a: "adopt",
-      u: "update",
-      d: "toggle",
-      x: "remove",
     };
-    const action = actions[name];
-    if (action) {
-      stop();
-      void act(action);
-      return;
-    }
-    if (name === "r") {
-      stop();
-      void reload();
-    }
-  };
+    return {
+      mode: "global",
+      priority: 20,
+      commands: [
+        {
+          id: "git-skills.next-tab",
+          bind: "tab",
+          run: () => switchTo(view() === "catalog" ? "project" : "catalog"),
+        },
+        { id: "git-skills.right", bind: "right", run: () => switchTo("project") },
+        { id: "git-skills.left", bind: "left", run: () => switchTo("catalog") },
+        {
+          id: "git-skills.up",
+          bind: "up",
+          run: () => setSelected((index) => Math.max(0, index - 1)),
+        },
+        {
+          id: "git-skills.down",
+          bind: "down",
+          run: () => setSelected((index) => Math.min(rows().length - 1, index + 1)),
+        },
+        { id: "git-skills.enter", bind: "return", run: () => void act("enter") },
+        { id: "git-skills.adopt", bind: "ctrl+a", run: () => void act("adopt") },
+        { id: "git-skills.update", bind: "ctrl+u", run: () => void act("update") },
+        { id: "git-skills.toggle", bind: "ctrl+d", run: () => void act("toggle") },
+        { id: "git-skills.remove", bind: "ctrl+x", run: () => void act("remove") },
+        { id: "git-skills.refresh", bind: "ctrl+r", run: () => void reload() },
+        { id: "git-skills.close", bind: "escape", run: () => close() },
+      ],
+      bindings: [
+        "git-skills.next-tab",
+        "git-skills.right",
+        "git-skills.left",
+        "git-skills.up",
+        "git-skills.down",
+        "git-skills.enter",
+        "git-skills.adopt",
+        "git-skills.update",
+        "git-skills.toggle",
+        "git-skills.remove",
+        "git-skills.refresh",
+        "git-skills.close",
+      ],
+    };
+  });
 
   const muted = (): string | undefined => props.context.theme?.text?.muted;
   const accent = (): string | undefined => props.context.theme?.text?.accent;
@@ -465,7 +471,7 @@ function Browser(props: {
           setQuery(value);
           setSelected(0);
         },
-        onKeyDown: onKey,
+
       }),
       h(Show, {
         when: () => !busy() && rows().length > 0,
