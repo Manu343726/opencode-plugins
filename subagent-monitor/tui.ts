@@ -112,6 +112,18 @@ function SidebarBody(props: { sessionID: string; ttlMs: number }) {
     // tree reports its own family, which does not include them.
     const root = context.data.session.root(props.sessionID);
     const all = collect(context.data.session, root);
+    const listed = context.data.session.list();
+    console.warn(
+      "[subagent-monitor]",
+      JSON.stringify({
+        session: props.sessionID,
+        root,
+        family: context.data.session.family(root).length,
+        listed: listed.length,
+        withParent: listed.filter((item) => (item as { parentID?: string }).parentID).length,
+        rows: all.length,
+      }),
+    );
     return [...prune(all, { now, ttlMs: props.ttlMs, seenFinished }).rows];
   });
 
