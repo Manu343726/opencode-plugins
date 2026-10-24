@@ -1,0 +1,24 @@
+{
+  "name": "opencode-plugins",
+  "version": "0.1.0",
+  "description": "Personal OpenCode plugins, one directory per plugin, loaded through a single entrypoint",
+  "type": "module",
+  "private": true,
+  "license": "MIT",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --test git-skills/test/",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "jsonc-parser": "^3.3.1",
+    "yaml": "^2.8.1"
+  },
+  "devDependencies": {
+    "@opencode/plugin": "2.0.31",
+    "@types/node": "^24.12.2",
+    "typescript": "^5.9.3"
+  }
+}

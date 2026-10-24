@@ -1,0 +1,192 @@
+/**
+ * The plugin: git repositories as per-project sources of skills and agents.
+ *
+ * Setup resolves the declared references, then registers what it found. Two
+ * details are load-bearing and worth stating where they are implemented:
+ *
+ *   - a skill is registered with `editor.add`, which is documented;
+ *   - an agent is registered with `editor.update` on an id that does not exist
+ *     yet, which **creates** it. That is measured behaviour on 2.0.31, not
+ *     documented, so it lives in `registerAgent` alone: if a future release
+ *     stops creating, one function and one test fail instead of the feature
+ *     disappearing quietly.
+ *
+ * Entries the project already owns — adopted copies and hand-written files —
+ * are never registered, so an id has exactly one definition in a session.
+ */
+
+import { Plugin, Skill } from "@opencode/plugin";
+import * as fs from "node:fs/promises";
+import * as os from "node:os";
+import * as path from "node:path";
+
+import { parseAgent, parseSkillMeta } from "./agentfile.ts";
+import { listAdopted, snapshot, STATE_LABEL } from "./adopt.ts";
+import { readOptions, resolve, summarize, type Resolution } from "./resolve.ts";
+import { readLists } from "./config.ts";
+
+/**
+ * Applies a branded-string schema when the runtime provides one, and falls
+ * back to the plain string. The brand is a TypeScript device; at runtime these
+ * are strings, and depending on `.make` existing would be a needless way to
+ * break the plugin on a schema change.
+ */
+function branded(value: string, schema: unknown): unknown {
+  const candidate = schema as { make?: (input: string) => unknown } | undefined;
+  return typeof candidate?.make === "function" ? candidate.make(value) : value;
+}
+
+/** Registers an agent that only exists in a repository. */
+function registerAgent(
+  editor: { get(id: string): unknown; update(id: string, update: (agent: Record<string, unknown>) => void): void },
+  id: string,
+  text: string,
+): void {
+  if (editor.get(id) !== undefined) return;
+  const { fields } = parseAgent(text, id);
+
+  // `update` on a missing id creates the agent. Everything below is a field of
+  // Agent.Info, so an unchanged field is left to its default.
+  editor.update(id, (agent) => {
+    agent.name = fields.name;
+    agent.mode = fields.mode;
+    agent.system = fields.system;
+    if (fields.description !== undefined) agent.description = fields.description;
+    if (fields.hidden !== undefined) agent.hidden = fields.hidden;
+    if (fields.color !== undefined) agent.color = fields.color;
+    if (fields.steps !== undefined) agent.steps = fields.steps;
+    if (fields.permissions !== undefined) agent.permissions = fields.permissions;
+    if (fields.model !== undefined) {
+      agent.model = {
+        id: fields.model.id,
+        providerID: fields.model.providerID,
+        ...(fields.model.variant === undefined ? {} : { variant: fields.model.variant }),
+      };
+    }
+  });
+}
+
+export default Plugin.define({
+  id: "git-skills",
+
+  async setup(ctx) {
+    const projectDir = ctx.location.directory;
+    const { options, problems: optionProblems } = readOptions(ctx.options);
+
+    for (const problem of optionProblems) console.warn(`[git-skills] ${problem}`);
+
+    let resolution: Resolution;
+    try {
+      resolution = await resolve(projectDir, {
+        ...options,
+        globalConfigDir: options.globalConfigDir ?? path.join(os.homedir(), ".config", "opencode"),
+      });
+    } catch (error) {
+      console.warn(`[git-skills] could not resolve the declared references: ${String(error)}`);
+      return;
+    }
+
+    for (const problem of resolution.problems) console.warn(`[git-skills] ${problem}`);
+    for (const warning of resolution.warnings) console.warn(`[git-skills] ${warning}`);
+    for (const skipped of resolution.skipped) {
+      console.warn(`[git-skills] ${skipped.spec.id} is not registered (${skipped.reason}: ${skipped.detail})`);
+    }
+
+    const skills = resolution.entries.filter((entry) => entry.entry.kind === "skill");
+    const agents = resolution.entries.filter((entry) => entry.entry.kind === "agent");
+
+    const skillRegistration = await ctx.skill.transform((editor) => {
+      for (const resolved of skills) {
+        const id = resolved.spec.id;
+        if (editor.get(id) !== undefined) continue;
+        const meta = parseSkillMeta(resolved.document, id);
+        editor.add({
+          id: branded(id, Skill.ID) as never,
+          name: branded(meta.name, Skill.Name) as never,
+          description: meta.description,
+          path: branded(
+            path.join(resolved.entry.path, "SKILL.md"),
+            (Skill.Info as unknown as { fields: { path: unknown } }).fields.path,
+          ) as never,
+          content: meta.body,
+        });
+      }
+    });
+
+    const agentRegistration = await ctx.agent.transform((editor) => {
+      for (const resolved of agents) {
+        registerAgent(editor, resolved.spec.id, resolved.document);
+      }
+    });
+
+    const toolRegistration = await ctx.tool.transform((editor) => {
+      editor.add({
+        name: "git_skills",
+        description:
+          "Report the skills and agents this project loads from git repositories, and the state of the ones adopted into the project",
+        input: {
+          type: "object",
+          properties: {
+            action: {
+              type: "string",
+              enum: ["status", "adopted", "references"],
+              description:
+                "status: what is loaded from repositories; adopted: copies in the project and whether they drifted; references: what the project config declares",
+            },
+          },
+          required: ["action"],
+          additionalProperties: false,
+        },
+        execute: async (input: unknown) => {
+          const action = (input as { action?: string }).action ?? "status";
+          if (action === "references") {
+            const lists = await readLists(projectDir);
+            return {
+              content: [
+                `${lists.file ?? "(no project config)"}`,
+                `skills: ${lists.skills.join(", ") || "(none)"}`,
+                `agents: ${lists.agents.join(", ") || "(none)"}`,
+                `repos: ${lists.repos.join(", ") || "(none)"}`,
+              ].join("\n"),
+            };
+          }
+
+          if (action === "adopted") {
+            const adopted = await listAdopted(projectDir);
+            if (adopted.length === 0) return { content: "No entries are adopted into this project." };
+            const lines: string[] = [];
+            for (const item of adopted) {
+              const state = await snapshot(item);
+              lines.push(
+                `${item.kind} ${item.id} — ${STATE_LABEL[state.state]} (${item.provenance.id}, commit ${item.provenance.commit.slice(0, 8)})`,
+              );
+            }
+            return { content: lines.join("\n") };
+          }
+
+          return { content: summarize(resolution) };
+        },
+      });
+    });
+
+    // Local files can appear or disappear while the server runs; a reload
+    // replays the transforms against the new state without restarting.
+    const refresh = async () => {
+      try {
+        await ctx.skill.reload();
+        await ctx.agent.reload();
+      } catch (error) {
+        console.warn(`[git-skills] reload failed: ${String(error)}`);
+      }
+    };
+    const timer = setInterval(() => void refresh(), 10 * 60_000);
+    if (typeof timer.unref === "function") timer.unref();
+
+    return async () => {
+      clearInterval(timer);
+      await skillRegistration.dispose();
+      await agentRegistration.dispose();
+      await toolRegistration.dispose();
+    };
+  },
+});

@@ -1,0 +1,34 @@
+{
+  "name": "opencode-git-skills",
+  "version": "0.1.0",
+  "description": "Use git repositories as per-project sources of OpenCode skills and agents",
+  "type": "module",
+  "license": "MIT",
+  "exports": {
+    ".": "./index.ts",
+    "./tui": "./tui.ts"
+  },
+  "files": [
+    "src",
+    "index.ts",
+    "tui.ts",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --test test/",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "jsonc-parser": "^3.3.1",
+    "yaml": "^2.8.1"
+  },
+  "devDependencies": {
+    "@opencode/plugin": "2.0.31",
+    "@types/node": "^24.12.2",
+    "typescript": "^5.9.3"
+  }
+}
