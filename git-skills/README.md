@@ -89,6 +89,24 @@ A repository that follows neither convention can declare itself:
 
 A declared section replaces the convention for that kind.
 
+## Global plus project
+
+What a project sees is the **sum** of two configurations: the machine's
+(`~/.config/opencode/opencode.jsonc`) and the project's own. The global one says what every
+project gets; the project's adds what is dedicated to it.
+
+The plugin reads both from disk and merges them by reference, because a plugin instance only
+receives the options of the entry that loaded it. The project's entries come last and therefore
+win, which is the only way for one project to turn off something declared for all of them:
+
+```jsonc
+// global
+"agents": ["docs-writer@ssh://git@forgejo:2222/homelab/Homelab.git:main"]
+
+// project: the same reference, off — nothing else needs saying
+"agents": [{ "reference": "docs-writer@ssh://git@forgejo:2222/homelab/Homelab.git:main", "enabled": false }]
+```
+
 ## Options
 
 | Option | Meaning |

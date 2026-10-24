@@ -14,7 +14,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { applyEdits, modify, parse, type ParseError, printParseErrorCode } from "jsonc-parser";
 
-import { parseItems, storedForm, type Item } from "./items.ts";
+import { parseItems, storedForm, toItem, type Item, type ItemInput } from "./items.ts";
 
 /**
  * A list item is a reference string when it is enabled, which is the implicit
@@ -71,27 +71,7 @@ export function globalConfigDir(): string {
  * globally.
  */
 export async function findConfigFile(projectDir: string): Promise<string | undefined> {
-  for (const candidate of CANDIDATES) {
-    const absolute = path.join(projectDir, candidate);
-    try {
-      await fs.stat(absolute);
-      return absolute;
-    } catch {
-      // keep looking
-    }
-  }
-
-  const globalDir = globalConfigDir();
-  for (const candidate of CANDIDATES) {
-    const absolute = path.join(globalDir, candidate);
-    try {
-      await fs.stat(absolute);
-      return absolute;
-    } catch {
-      // keep looking
-    }
-  }
-  return undefined;
+  return (await findProjectConfigFile(projectDir)) ?? (await findGlobalConfigFile());
 }
 
 /** The path the TUI creates when the project has no configuration yet. */
@@ -266,6 +246,34 @@ export function removeFromList(text: string, listKey: ListKey, value: string): s
   return apply(text, [...path, index], undefined);
 }
 
+/**
+ * Merges item lists by reference: later sources win.
+ *
+ * This is what makes a project see the sum of the global configuration and its
+ * own. The global file says what every project gets; the project file adds what
+ * is dedicated to it, and may also override the state of an inherited entry —
+ * which is the only way to turn off, in one project, something declared for all
+ * of them.
+ */
+export function mergeItems(sources: readonly (readonly ItemInput[])[]): Item[] {
+  const merged: Item[] = [];
+  const index = new Map<string, number>();
+
+  for (const source of sources) {
+    for (const raw of source) {
+      const item = toItem(raw);
+      const at = index.get(item.reference);
+      if (at === undefined) {
+        index.set(item.reference, merged.length);
+        merged.push(item);
+      } else {
+        merged[at] = item;
+      }
+    }
+  }
+  return merged;
+}
+
 export async function readConfig(file: string): Promise<string> {
   try {
     return await fs.readFile(file, "utf8");
@@ -280,28 +288,96 @@ export async function writeConfig(file: string, text: string): Promise<void> {
 }
 
 /** Reads the plugin's lists from a project, tolerating every absence. */
-export async function readLists(projectDir: string): Promise<{
-  file?: string;
+export interface Lists {
+  readonly file?: string;
+  readonly files: readonly string[];
+  readonly skills: Item[];
+  readonly agents: Item[];
+  readonly repos: string[];
+  readonly problems: string[];
+}
+
+async function listsFrom(file: string): Promise<{
   skills: Item[];
   agents: Item[];
   repos: string[];
   problems: string[];
 }> {
-  const file = await findConfigFile(projectDir);
-  if (!file) return { skills: [], agents: [], repos: [], problems: [] };
   const text = await readConfig(file);
   const found = locate(text);
   const values = found?.scope.values ?? {};
   const problems: string[] = [];
   const items = (key: "skills" | "agents"): Item[] => {
     const parsed = parseItems(values[key]);
-    for (const problem of parsed.problems) problems.push(`${key}: ${problem}`);
+    for (const problem of parsed.problems) problems.push(`${path.basename(file)}: ${key}: ${problem}`);
     return [...parsed.items];
   };
   const repos = Array.isArray(values.repos)
     ? values.repos.filter((item): item is string => typeof item === "string")
     : [];
-  return { file, skills: items("skills"), agents: items("agents"), repos, problems };
+  return { skills: items("skills"), agents: items("agents"), repos, problems };
+}
+
+/**
+ * Every list a directory sees: the global configuration first, then its own.
+ *
+ * The order is the rule — global entries apply everywhere, the project's entries
+ * add to them and may override an inherited one's state, which is how a project
+ * turns off something declared for all projects.
+ */
+export async function readLists(projectDir: string): Promise<Lists> {
+  const projectFile = await findProjectConfigFile(projectDir);
+  const globalFile = await findGlobalConfigFile();
+
+  const sources: string[] = [];
+  if (globalFile) sources.push(globalFile);
+  if (projectFile && projectFile !== globalFile) sources.push(projectFile);
+  if (sources.length === 0) {
+    return { files: [], skills: [], agents: [], repos: [], problems: [] };
+  }
+
+  const read = await Promise.all(sources.map((file) => listsFrom(file)));
+  const skills = mergeItems(read.map((entry) => entry.skills));
+  const agents = mergeItems(read.map((entry) => entry.agents));
+  const repos = [...new Set(read.flatMap((entry) => entry.repos))];
+
+  return {
+    file: projectFile ?? globalFile,
+    files: sources,
+    skills,
+    agents,
+    repos,
+    problems: read.flatMap((entry) => entry.problems),
+  };
+}
+
+/** The project's own configuration, without the global fallback. */
+export async function findProjectConfigFile(projectDir: string): Promise<string | undefined> {
+  for (const candidate of CANDIDATES) {
+    const absolute = path.join(projectDir, candidate);
+    try {
+      await fs.stat(absolute);
+      return absolute;
+    } catch {
+      // keep looking
+    }
+  }
+  return undefined;
+}
+
+/** The machine's configuration. */
+export async function findGlobalConfigFile(): Promise<string | undefined> {
+  const globalDir = globalConfigDir();
+  for (const candidate of CANDIDATES) {
+    const absolute = path.join(globalDir, candidate);
+    try {
+      await fs.stat(absolute);
+      return absolute;
+    } catch {
+      // keep looking
+    }
+  }
+  return undefined;
 }
 
 /** Applies one edit to the project's configuration file. */
@@ -329,13 +405,17 @@ export async function editList(
 export function setEnabled(text: string, listKey: "skills" | "agents", reference: string, enabled: boolean): string {
   const found = locate(text);
   if (!found) return text;
-  const current = found.scope.values[listKey];
-  if (!Array.isArray(current)) return text;
 
-  const index = current.findIndex((entry) =>
+  const current = found.scope.values[listKey];
+  const existing = Array.isArray(current) ? current : [];
+  const index = existing.findIndex((entry) =>
     typeof entry === "string" ? entry === reference : entry?.reference === reference,
   );
-  if (index < 0) return text;
+
+  // Not in this file: it is inherited from the global one, so write an override
+  // here. That is what lets a project turn off what every project receives, and
+  // it is also the path taken when the list does not exist yet.
+  if (index < 0) return addToList(text, listKey, storedForm({ reference, enabled }));
 
   const path =
     found.scope.key === null

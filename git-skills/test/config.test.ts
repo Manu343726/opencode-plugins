@@ -5,14 +5,23 @@ import {
   addToList,
   findConfigFile,
   globalConfigDir,
+  mergeItems,
   findEntries,
   readLists,
   removeFromList,
   setEnabled,
 } from "../src/config.ts";
+import * as fs from "node:fs/promises";
+import * as os from "node:os";
+import * as path from "node:path";
+
 import { parse as parseJsonc } from "jsonc-parser";
 
 import { tmpdir, writeFiles } from "./helpers.ts";
+
+// Every readLists in this file is isolated from the machine's own global
+// configuration, which is merged in production and would leak into assertions.
+process.env.OPENCODE_CONFIG_DIR = await fs.mkdtemp(path.join(os.tmpdir(), "ogs-global-iso-"));
 
 const BASE = `{
   // a comment that has to survive
@@ -115,12 +124,11 @@ test("readLists tolerates a project with no config", async () => {
   const previous = process.env.OPENCODE_CONFIG_DIR;
   process.env.OPENCODE_CONFIG_DIR = empty;
   try {
-    assert.deepEqual(await readLists(project), {
-      skills: [],
-      agents: [],
-      repos: [],
-      problems: [],
-    });
+    const lists = await readLists(project);
+    assert.deepEqual(lists.skills, []);
+    assert.deepEqual(lists.agents, []);
+    assert.deepEqual(lists.repos, []);
+    assert.deepEqual(lists.files, []);
   } finally {
     if (previous === undefined) delete process.env.OPENCODE_CONFIG_DIR;
     else process.env.OPENCODE_CONFIG_DIR = previous;
@@ -211,7 +219,10 @@ test("the project's own config wins over the global one", async () => {
   process.env.OPENCODE_CONFIG_DIR = global;
   try {
     const lists = await readLists(project);
-    assert.deepEqual(lists.skills.map((item) => item.reference), ["local@https://h/y.git"]);
+    assert.deepEqual(lists.skills.map((item) => item.reference), [
+      "a@https://h/x.git",
+      "local@https://h/y.git",
+    ]);
   } finally {
     if (previous === undefined) delete process.env.OPENCODE_CONFIG_DIR;
     else process.env.OPENCODE_CONFIG_DIR = previous;
@@ -260,4 +271,71 @@ test("adding an already disabled item does not duplicate it", () => {
   const again = addToList(text, "skills", "a@https://h/x.git");
   const parsed = parseJsonc(again) as { plugins: Array<{ options: Record<string, unknown> }> };
   assert.equal((parsed.plugins[0]?.options.skills as unknown[]).length, 1);
+});
+
+test("a project sees the sum of the global configuration and its own", async () => {
+  const project = await tmpdir("ogs-project-");
+  const global = await tmpdir("ogs-global-");
+  await writeFiles(global, {
+    "opencode.jsonc": addToList(
+      addToList(BASE, "skills", "everywhere@https://h/a.git"),
+      "agents",
+      "reviewer@https://h/a.git",
+    ),
+  });
+  await writeFiles(project, {
+    "opencode.jsonc": addToList(BASE, "skills", "dedicated@https://h/b.git"),
+  });
+
+  const previous = process.env.OPENCODE_CONFIG_DIR;
+  process.env.OPENCODE_CONFIG_DIR = global;
+  try {
+    const lists = await readLists(project);
+    assert.deepEqual(lists.skills.map((item) => item.reference), [
+      "everywhere@https://h/a.git",
+      "dedicated@https://h/b.git",
+    ]);
+    assert.deepEqual(lists.agents.map((item) => item.reference), ["reviewer@https://h/a.git"]);
+    assert.equal(lists.files.length, 2);
+  } finally {
+    process.env.OPENCODE_CONFIG_DIR = previous;
+  }
+});
+
+test("a project can turn off what the global configuration enables", async () => {
+  const project = await tmpdir("ogs-project-");
+  const global = await tmpdir("ogs-global-");
+  await writeFiles(global, {
+    "opencode.jsonc": addToList(BASE, "skills", "everywhere@https://h/a.git"),
+  });
+  // The project writes only the override: the reference it inherits, off.
+  await writeFiles(project, {
+    "opencode.jsonc": setEnabled(
+      addToList(BASE, "repos", "https://h/a.git"),
+      "skills",
+      "everywhere@https://h/a.git",
+      false,
+    ),
+  });
+
+  const previous = process.env.OPENCODE_CONFIG_DIR;
+  process.env.OPENCODE_CONFIG_DIR = global;
+  try {
+    const lists = await readLists(project);
+    assert.deepEqual(lists.skills, [{ reference: "everywhere@https://h/a.git", enabled: false }]);
+  } finally {
+    process.env.OPENCODE_CONFIG_DIR = previous;
+  }
+});
+
+test("merging keeps the order and lets the later source win", () => {
+  const merged = mergeItems([
+    ["a@u", { reference: "b@u", enabled: true }],
+    [{ reference: "b@u", enabled: false }, "c@u"],
+  ]);
+  assert.deepEqual(merged, [
+    { reference: "a@u", enabled: true },
+    { reference: "b@u", enabled: false },
+    { reference: "c@u", enabled: true },
+  ]);
 });

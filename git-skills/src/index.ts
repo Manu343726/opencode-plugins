@@ -23,7 +23,7 @@ import * as path from "node:path";
 import { parseAgent, parseSkillMeta } from "./agentfile.ts";
 import { listAdopted, snapshot, STATE_LABEL } from "./adopt.ts";
 import { readOptions, resolve, summarize, type Resolution } from "./resolve.ts";
-import { readLists } from "./config.ts";
+import { mergeItems, readLists } from "./config.ts";
 
 /**
  * Applies a branded-string schema when the runtime provides one, and falls
@@ -75,10 +75,21 @@ export default Plugin.define({
 
     for (const problem of optionProblems) console.warn(`[git-skills] ${problem}`);
 
+    // What a project sees is the sum of the machine's configuration and its
+    // own: the plugin instance only receives the options of the entry that
+    // loaded it, so the other one is read from disk. The project's entries come
+    // last and therefore win, which is the only way to turn off, in one
+    // project, something declared for all of them.
+    const lists = await readLists(projectDir);
+    for (const problem of lists.problems) console.warn(`[git-skills] ${problem}`);
+
     let resolution: Resolution;
     try {
       resolution = await resolve(projectDir, {
         ...options,
+        skills: mergeItems([options.skills ?? [], lists.skills]),
+        agents: mergeItems([options.agents ?? [], lists.agents]),
+        repos: [...new Set([...(options.repos ?? []), ...lists.repos])],
         globalConfigDir: options.globalConfigDir ?? path.join(os.homedir(), ".config", "opencode"),
       });
     } catch (error) {
