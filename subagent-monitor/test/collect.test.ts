@@ -146,3 +146,32 @@ test("the status marker follows the outcome, and running wins", () => {
   assert.equal(statusKind(false, "aborted"), "aborted");
   assert.equal(statusKind(false, undefined), "unknown");
 });
+
+test("the session's own outcome names the result, including an interruption", () => {
+  const sessions: SessionsLike = {
+    family: () => ["root", "ok", "bad", "cut"],
+    get: (id) => ({
+      title: id,
+      agent: "reviewer",
+      outcome: id === "ok" ? "succeeded" : id === "bad" ? "failed" : "interrupted",
+      time: { created: 1_000, updated: 2_000, idle: 2_000 },
+    }),
+    status: () => "idle",
+  };
+  const rows = collect(sessions, "root");
+  assert.deepEqual(
+    rows.map((row) => row.outcome),
+    ["ok", "error", "aborted"],
+  );
+  assert.deepEqual(
+    rows.map((row) => statusKind(row.running, row.outcome)),
+    ["ok", "error", "aborted"],
+  );
+  assert.equal(rows[0]?.finishedAt, 2_000);
+});
+
+test("a session that never reported an outcome stays unknown", () => {
+  const rows = collect(fake([["a", "reviewer", "idle", 1_000]]), "root");
+  assert.equal(rows[0]?.outcome, undefined);
+  assert.equal(statusKind(rows[0]!.running, rows[0]?.outcome), "unknown");
+});

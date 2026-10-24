@@ -10,7 +10,9 @@
 export interface SessionInfoLike {
   readonly title?: string;
   readonly agent?: { readonly id?: string } | string;
-  readonly time?: { readonly created?: number; readonly updated?: number };
+  /** The outcome of the last completed run, recorded by the session at `time.idle`. */
+  readonly outcome?: "succeeded" | "failed" | "interrupted";
+  readonly time?: { readonly created?: number; readonly updated?: number; readonly idle?: number };
 }
 
 /** The slice of `data.session` this needs, so it can be faked in a test. */
@@ -28,6 +30,23 @@ export interface Row {
   readonly created: number;
   /** When the session last changed, which for a finished one is when it ended. */
   readonly updated: number;
+  /** When it went idle, when the session records it. */
+  readonly finishedAt?: number;
+  /** How it ended, as the session itself records it. */
+  readonly outcome?: Outcome;
+}
+
+function outcomeOf(info: SessionInfoLike | undefined): Outcome | undefined {
+  switch (info?.outcome) {
+    case "succeeded":
+      return "ok";
+    case "failed":
+      return "error";
+    case "interrupted":
+      return "aborted";
+    default:
+      return undefined;
+  }
 }
 
 function agentOf(info: SessionInfoLike | undefined): string {
@@ -55,6 +74,8 @@ export function collect(sessions: SessionsLike, sessionID: string): Row[] {
         running: sessions.status(id) === "running",
         created: info?.time?.created ?? 0,
         updated: info?.time?.updated ?? info?.time?.created ?? 0,
+        ...(info?.time?.idle === undefined ? {} : { finishedAt: info.time.idle }),
+        ...(outcomeOf(info) === undefined ? {} : { outcome: outcomeOf(info) }),
       };
     })
     .sort((left, right) => {
@@ -129,7 +150,8 @@ export function prune(rows: readonly Row[], options: PruneOptions): Pruned {
     }
 
     const first = options.seenFinished.get(row.id);
-    const since = first ?? (row.updated > 0 ? row.updated : options.now);
+    const ended = row.finishedAt ?? row.updated;
+    const since = first ?? (ended > 0 ? ended : options.now);
     if (first === undefined) options.seenFinished.set(row.id, since);
 
     if (options.now - since >= options.ttlMs) {
@@ -146,6 +168,15 @@ export function prune(rows: readonly Row[], options: PruneOptions): Pruned {
 export type Outcome = "ok" | "error" | "aborted";
 
 export type StatusKind = "running" | "ok" | "error" | "aborted" | "unknown";
+
+/** What the state text says, one word per kind. */
+export const STATUS_LABEL: Readonly<Record<StatusKind, string>> = {
+  running: "running",
+  ok: "ok",
+  error: "error",
+  aborted: "aborted",
+  unknown: "done",
+};
 
 /**
  * What the status marker means.
