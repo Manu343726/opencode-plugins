@@ -13,9 +13,11 @@
 
 import { Plugin } from "@opencode/plugin/tui";
 
+import gitSkills from "./git-skills/src/tui.ts";
 import subagentMonitor from "./subagent-monitor/tui.ts";
 
 const TUI: Readonly<Record<string, Plugin.Definition>> = {
+  "git-skills": gitSkills,
   "subagent-monitor": subagentMonitor,
 };
 
