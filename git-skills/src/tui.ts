@@ -396,6 +396,13 @@ function Browser(props: {
         { id: "git-skills.right", bind: "right", run: () => switchTo("project") },
         { id: "git-skills.left", bind: "left", run: () => switchTo("catalog") },
         {
+          id: "git-skills.next",
+          bind: "ctrl+t",
+          run: () => switchTo(view() === "catalog" ? "project" : "catalog"),
+        },
+        { id: "git-skills.project", bind: "ctrl+y", run: () => switchTo("project") },
+        { id: "git-skills.catalog", bind: "ctrl+o", run: () => switchTo("catalog") },
+        {
           id: "git-skills.up",
           bind: "up",
           run: () => setSelected((index) => Math.max(0, index - 1)),
@@ -471,6 +478,11 @@ function Browser(props: {
           const plain = name.replace(/^arrow/, "");
           if (plain === "right" || plain === "left") {
             setView(plain === "right" ? "project" : "catalog");
+            setSelected(0);
+            return;
+          }
+          if (name === "t" && event.ctrl) {
+            setView(view() === "catalog" ? "project" : "catalog");
             setSelected(0);
             return;
           }
