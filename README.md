@@ -15,6 +15,19 @@ reaches the others.
 | [`git-skills`](git-skills/README.md) | Uses git repositories as per-project sources of skills and agents: declares `<id>@<url>:<ref>` references, registers them at startup, and can adopt an entry into the project with its provenance so drift is detectable | in use |
 | [`subagent-monitor`](subagent-monitor/README.md) | Shows the agents working in the current session in the side panel: running first, with elapsed time, and finished ones marked done | new |
 
+## Panels and the terminal half
+
+A plugin's `tui.ts` is not loaded from the `plugins` entry: the CLI reconciles its own plugin
+directories, so a project that wants panels re-exports the bundle from its plugins directory:
+
+```ts
+// .opencode/plugins/opencode-plugins-tui.ts
+export { default } from "/path/to/opencode-plugins/tui.ts"
+```
+
+That file is discovered by the server runner too, where there is no terminal; the TUI halves stand
+down when `context.keymap` is absent, so the session does not report a plugin failure.
+
 ## Consuming a plugin
 
 One package, one entry, and the plugin's own options nested under its name:

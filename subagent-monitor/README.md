@@ -36,6 +36,25 @@ That is not preference. Three things were measured, and each ruled out the obvio
 `@slkiser/opencode-quota` is built the same way — its own `@opentui` at 0.5.10, its own `solid-js`,
 and a compiled `dist/` — and it is the arrangement that loads.
 
+## Verified
+
+Driven in a real pty against OpenCode 2.0.31, in a project that declared the plugin and re-exported
+its `tui.ts` from `.opencode/plugins/`:
+
+```
+Subagents · 0 running · 0 in this session
+No subagents yet. An agent launched in the background appears here.
+```
+
+and, with a background subagent actually running:
+
+```
+Subagents · 1 running · 1 in this session
+● general   Sleep 90 then report   44s
+```
+
+The elapsed time advances and a finished entry flips to `done`.
+
 ## Updating
 
 When OpenCode ships a new OpenTUI, this pin has to move with it; the symptom of getting it wrong is
