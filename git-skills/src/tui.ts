@@ -35,7 +35,15 @@ import {
   STATE_LABEL,
   type State,
 } from "./adopt.ts";
-import { addToList, readConfig, readLists, removeFromList, setEnabled, writeConfig } from "./config.ts";
+import {
+  addToList,
+  projectDeclaresPlugin,
+  readConfig,
+  readLists,
+  removeFromList,
+  setEnabled,
+  writeConfig,
+} from "./config.ts";
 import type { Item } from "./items.ts";
 import { discover, findEntry, type Entry } from "./discover.ts";
 import { ensureCheckout } from "./git.ts";
@@ -174,11 +182,15 @@ async function rowsForProject(
 export default Plugin.define({
   id: "git-skills.browser",
 
-  setup(context) {
+  async setup(context) {
     const terminal = context as unknown as { keymap?: { layer?: unknown } };
     if (typeof terminal.keymap?.layer !== "function") return;
 
     const projectDir = (): string => context.location?.directory ?? process.cwd();
+
+    // The same rule as the server half: the command exists where the plugin is
+    // declared, not where an ancestor directory happens to declare it.
+    if ((await projectDeclaresPlugin(projectDir())) === undefined) return;
     const toast = (message: string, variant: "success" | "error" | "info" = "info"): void => {
       void context.ui.toast.show({ title: "Git skills", message, variant, duration: 5000 });
     };

@@ -25,7 +25,7 @@ import { parseAgent, parseSkillMeta } from "./agentfile.ts";
 import { splitFrontmatter } from "./provenance.ts";
 import { listAdopted, snapshot, STATE_LABEL } from "./adopt.ts";
 import { readOptions, resolve, summarize, type Resolution } from "./resolve.ts";
-import { readLists } from "./config.ts";
+import { projectDeclaresPlugin, readLists } from "./config.ts";
 
 /**
  * Applies a branded-string schema when the runtime provides one, and falls
@@ -73,6 +73,17 @@ export default Plugin.define({
 
   async setup(ctx) {
     const projectDir = ctx.location.directory;
+
+    // Loaded from an ancestor's configuration is not the same as declared here.
+    // Without this, a configuration at the root of `$HOME` activates the plugin
+    // in every project below it.
+    if ((await projectDeclaresPlugin(projectDir)) === undefined) {
+      console.warn(
+        `[git-skills] not declared in a configuration of ${projectDir}; staying idle`,
+      );
+      return;
+    }
+
     const { options, problems: optionProblems } = readOptions(ctx.options);
 
     for (const problem of optionProblems) console.warn(`[git-skills] ${problem}`);

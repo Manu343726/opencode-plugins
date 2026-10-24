@@ -424,3 +424,18 @@ export function setEnabled(text: string, listKey: "skills" | "agents", reference
 
   return apply(text, [...path, index], storedForm({ reference, enabled }));
 }
+
+/**
+ * The project's own configuration, when it declares this plugin.
+ *
+ * A plugin loaded from an ancestor directory is loaded *because of that
+ * directory*, not because of this project: on a machine whose `$HOME` is a
+ * repository, everything under it inherits the entry. This is what lets the
+ * plugin stay dormant where nobody asked for it.
+ */
+export async function projectDeclaresPlugin(projectDir: string): Promise<string | undefined> {
+  const file = await findProjectConfigFile(projectDir);
+  if (!file) return undefined;
+  const text = await readConfig(file);
+  return locate(text) === undefined ? undefined : file;
+}
