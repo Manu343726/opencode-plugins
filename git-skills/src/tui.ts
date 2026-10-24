@@ -1,26 +1,20 @@
 /**
- * The TUI: browse the known repositories, and manage what the project uses.
+ * The browser: a large modal with two tabs.
  *
- * It reads the project configuration and the disk itself rather than asking
- * the server, because `/api/agent` and `/api/skill` do not list file-based
- * definitions — measured on 2.0.31 — so the server cannot answer "what is
- * available here".
+ * - **Catalog** — every entry in the known repositories, searched with the
+ *   dialog's own search box. Enter enables it in the project; `ctrl+a` adopts a
+ *   copy.
+ * - **Project** — what the project uses right now: the references its
+ *   configuration declares and the copies it owns, each with its state.
+ *   `ctrl+u` updates an adopted copy, `ctrl+d` disables a declared entry or
+ *   deletes a copy.
+ *
+ * `tab` moves between them. The tabs are two openings of the same dialog rather
+ * than one custom view: `ctrl+/tab` closes it and reopens the other, which keeps
+ * the host's search box, its key handling and its scrolling instead of
+ * reimplementing all three. `dialog.set` is what makes it large.
  */
 
-import { Plugin } from "@opencode/plugin/tui";
-
-import {
-  adoptEntry,
-  existingDefinition,
-  listAdopted,
-  removeAdopted,
-  remoteDigest,
-  snapshot,
-  STATE_LABEL,
-} from "./adopt.ts";
-import { addToList, readConfig, readLists, removeFromList, writeConfig } from "./config.ts";
-import { discover, findEntry, type Entry } from "./discover.ts";
-import { ensureCheckout } from "./git.ts";
 import {
   adoptedChoice,
   decode,
@@ -29,54 +23,157 @@ import {
   knownTargets,
   shortLabel,
   type Choice,
+  type Target,
 } from "./browse.ts";
-import { formatSpec, parseSpec, type Spec } from "./ref.ts";
+import {
+  adoptEntry,
+  existingDefinition,
+  listAdopted,
+  removeAdopted,
+  remoteDigest,
+  snapshot,
+  STATE_LABEL,
+  type State,
+} from "./adopt.ts";
+import { addToList, readConfig, readLists, removeFromList, writeConfig } from "./config.ts";
+import { discover, findEntry, type Entry } from "./discover.ts";
+import { ensureCheckout } from "./git.ts";
+import { formatSpec, parseSpec, type Kind, type Spec } from "./ref.ts";
+import { Plugin } from "@opencode/plugin/tui";
 
-interface RepoScan {
+export const PANEL = "git-skills.browser";
+
+type View = "catalog" | "project";
+
+interface Scan {
   readonly url: string;
   readonly ref: string;
-  readonly dir: string;
   readonly commit: string;
   readonly entries: readonly Entry[];
   readonly warning?: string;
 }
 
-/** Clones or refreshes one repository and lists what it holds. */
-async function scan(
-  url: string,
-  ref: string,
-  cacheDir: string | undefined,
-  offline: boolean,
-): Promise<RepoScan | undefined> {
-  const checkout = await ensureCheckout({ url, ref, cacheDir, offline });
-  if (checkout.commit === "") return undefined;
-  const discovery = await discover(checkout.dir);
-  return {
-    url,
-    ref,
-    dir: checkout.dir,
-    commit: checkout.commit,
-    entries: discovery.entries,
-    warning: checkout.warning,
-  };
+interface Row {
+  readonly title: string;
+  readonly description?: string;
+  readonly category: string;
+  readonly value: string;
+}
+
+const TABS: Readonly<Record<View, { title: string; other: View; otherLabel: string }>> = {
+  catalog: { title: "Git skills · catalog", other: "project", otherLabel: "Project" },
+  project: { title: "Git skills · project", other: "catalog", otherLabel: "Catalog" },
+};
+
+async function scanAll(targets: readonly Target[]): Promise<Scan[]> {
+  const scans: Scan[] = [];
+  for (const target of targets) {
+    const checkout = await ensureCheckout({ url: target.url, ref: target.ref });
+    if (checkout.commit === "") continue;
+    const discovery = await discover(checkout.dir);
+    scans.push({
+      url: target.url,
+      ref: target.ref,
+      commit: checkout.commit,
+      entries: discovery.entries,
+      warning: checkout.warning,
+    });
+  }
+  return scans;
+}
+
+function rowsForCatalog(
+  scans: readonly Scan[],
+  adoptedIds: ReadonlySet<string>,
+  lists: { skills: readonly string[]; agents: readonly string[] },
+): Row[] {
+  const rows: Row[] = [];
+  for (const scan of scans) {
+    const target = { url: scan.url, ref: scan.ref };
+    for (const entry of scan.entries) {
+      if (adoptedIds.has(`${entry.kind}:${entry.id}`)) continue;
+      const declared = isDeclared(entry, target, lists);
+      rows.push({
+        title: `${entry.kind} ${entry.id}`,
+        description: `${declared ? "enabled — " : ""}${entry.description ?? entry.origin}`,
+        category: shortLabel(target),
+        value: encode({
+          kind: entry.kind,
+          id: entry.id,
+          url: scan.url,
+          ref: scan.ref,
+          adopted: false,
+        }),
+      });
+    }
+  }
+  return rows;
+}
+
+async function rowsForProject(
+  scans: readonly Scan[],
+  projectDir: string,
+  lists: { skills: readonly string[]; agents: readonly string[] },
+): Promise<Row[]> {
+  const rows: Row[] = [];
+  const adopted = await listAdopted(projectDir);
+
+  for (const item of adopted) {
+    let remote: string | undefined;
+    try {
+      const spec = parseSpec(item.provenance.id);
+      const scan = scans.find((candidate) => candidate.url === spec.url && candidate.ref === spec.ref);
+      const entry = scan ? findEntry({ entries: scan.entries, problems: [] }, item.kind, item.id) : undefined;
+      if (entry) remote = await remoteDigest(entry);
+    } catch {
+      // provenance unreadable: report the local state only
+    }
+    const state = (await snapshot(item, remote)).state;
+    rows.push({
+      title: `${item.kind} ${item.id}`,
+      description: `${STATE_LABEL[state]} · adopted · ${item.provenance.id}`,
+      category: "adopted",
+      value: encode(adoptedChoice(item.kind, item.id, item.provenance.id)),
+    });
+  }
+
+  for (const [kind, values] of [
+    ["skill", lists.skills],
+    ["agent", lists.agents],
+  ] as const) {
+    for (const text of values) {
+      let spec: Spec;
+      try {
+        spec = parseSpec(text);
+      } catch {
+        rows.push({ title: `${kind} ${text}`, description: "malformed reference", category: "declared", value: "" });
+        continue;
+      }
+      if (adopted.some((item) => item.kind === kind && item.id === spec.id)) continue;
+      const scan = scans.find((candidate) => candidate.url === spec.url && candidate.ref === spec.ref);
+      const entry = scan ? findEntry({ entries: scan.entries, problems: [] }, kind, spec.id) : undefined;
+      rows.push({
+        title: `${kind} ${spec.id}`,
+        description: entry ? "enabled · from the repository" : "enabled · not found in the repository",
+        category: shortLabel({ url: spec.url, ref: spec.ref }),
+        value: encode({ kind, id: spec.id, url: spec.url, ref: spec.ref, adopted: false }),
+      });
+    }
+  }
+
+  return rows;
 }
 
 export default Plugin.define({
-  id: "git-skills.tui",
+  id: "git-skills.browser",
 
   setup(context) {
-    // The same file can be loaded by the server runner as well — a plugin file
-    // under `.opencode/plugins/` is discovered by both — and only the CLI has a
-    // terminal. Measured on 2.0.31: calling `context.keymap.layer` there fails
-    // with "undefined is not an object", so the TUI half stands down instead of
-    // breaking the session.
     const terminal = context as unknown as { keymap?: { layer?: unknown } };
     if (typeof terminal.keymap?.layer !== "function") return;
 
     const projectDir = (): string => context.location?.directory ?? process.cwd();
-
     const toast = (message: string, variant: "success" | "error" | "info" = "info"): void => {
-      void context.ui.toast.show({ title: "Git skills", message, variant, duration: 4000 });
+      void context.ui.toast.show({ title: "Git skills", message, variant, duration: 5000 });
     };
 
     const browse = async (): Promise<void> => {
@@ -85,184 +182,181 @@ export default Plugin.define({
       const adopted = await listAdopted(projectDir());
 
       if (targets.length === 0 && adopted.length === 0) {
-        toast("No repositories declared. Add one to the plugin's options.repos first.", "info");
+        toast("No repositories declared. Add one to the plugin's options.repos.");
         return;
       }
 
-      const scans: RepoScan[] = [];
-      for (const target of targets) {
-        try {
-          const result = await scan(target.url, target.ref, undefined, false);
-          if (result) scans.push(result);
-          else toast(`${target.url}@${target.ref} is unavailable`, "error");
-        } catch (error) {
-          toast(`${target.url}@${target.ref}: ${String(error)}`, "error");
-        }
-      }
+      const scans = await scanAll(targets);
+      for (const scan of scans) if (scan.warning) toast(scan.warning, "error");
 
-      const options: { title: string; value: string; description?: string; category?: string }[] = [];
+      let view: View = "catalog";
+      for (;;) {
+        const adoptedIds = new Set(adopted.map((item) => `${item.kind}:${item.id}`));
+        const rows =
+          view === "catalog"
+            ? rowsForCatalog(scans, adoptedIds, lists)
+            : await rowsForProject(scans, projectDir(), lists);
 
-      for (const item of adopted) {
-        // Compare with the entry as the ref holds it now, so an unrelated
-        // commit upstream does not mark every adopted entry as updatable.
-        let remote: string | undefined;
+        let switched = false;
+        const tab: { title: string; other: View; otherLabel: string } = TABS[view];
+
         try {
-          const spec = parseSpec(item.provenance.id);
-          const repository = scans.find(
-            (candidate) => candidate.url === spec.url && candidate.ref === spec.ref,
-          );
-          const entry = repository
-            ? findEntry({ entries: repository.entries, problems: [] }, item.kind, item.id)
-            : undefined;
-          if (entry) remote = await remoteDigest(entry);
+          context.ui.dialog.set({ size: "xlarge" });
         } catch {
-          // An unreadable provenance reference leaves the state at local-only.
+          // The dialog may not be active yet on this build; the size is cosmetic.
         }
-        const state = await snapshot(item, remote);
-        options.push({
-          title: `${item.kind} ${item.id}`,
-          value: encode(adoptedChoice(item.kind, item.id, item.provenance.id)),
-          description: `${STATE_LABEL[state.state]} — ${item.provenance.id}`,
-          category: "Adopted",
+
+        const selected = await context.ui.dialog.select({
+          title: tab.title,
+          placeholder:
+            view === "catalog" ? "Search every known repository" : "Search what this project uses",
+          options: rows,
+          search: (query, all) =>
+            all.filter((option) =>
+              `${option.title} ${option.description ?? ""} ${option.category ?? ""}`
+                .toLowerCase()
+                .includes(query.toLowerCase()),
+            ),
+          actions: [
+            view === "catalog"
+              ? {
+                  bind: "ctrl+a",
+                  title: "Adopt",
+                  onTrigger: (value) => void adopt(decode(String(value))),
+                }
+              : {
+                  bind: "ctrl+u",
+                  title: "Update",
+                  onTrigger: (value) => void update(decode(String(value))),
+                },
+            view === "catalog"
+              ? {
+                  bind: "ctrl+e",
+                  title: "Enable",
+                  onTrigger: (value) => void enable(decode(String(value))),
+                }
+              : {
+                  bind: "ctrl+d",
+                  title: "Disable",
+                  onTrigger: (value) => void disable(decode(String(value))),
+                },
+            {
+              bind: "tab",
+              title: tab.otherLabel,
+              selection: "none",
+              onTrigger: () => {
+                switched = true;
+                context.ui.dialog.clear();
+              },
+            },
+          ],
         });
-      }
 
-      for (const repo of scans) {
-        for (const entry of repo.entries) {
-          const alreadyAdopted = adopted.some(
-            (item) => item.kind === entry.kind && item.id === entry.id,
-          );
-          if (alreadyAdopted) continue;
-          const declared = isDeclared(entry, { url: repo.url, ref: repo.ref }, lists);
-          options.push({
-            title: `${entry.kind} ${entry.id}`,
-            value: encode({
-              kind: entry.kind,
-              id: entry.id,
-              url: repo.url,
-              ref: repo.ref,
-              adopted: false,
-            }),
-            description: `${declared ? "in config — " : ""}${entry.description ?? entry.origin}`,
-            category: shortLabel({ url: repo.url, ref: repo.ref }),
-          });
+        if (switched) {
+          view = tab.other;
+          continue;
         }
-        if (repo.warning) toast(repo.warning, "error");
-      }
 
-      const act = async (choice: Choice | undefined, action: string): Promise<void> => {
+        const choice = selected === undefined ? undefined : decode(String(selected));
         if (!choice) return;
-        if (action === "update" && !choice.adopted) {
-          toast("Only an adopted entry can be updated", "error");
-          return;
-        }
 
-        const repository = scans.find((repo) => repo.url === choice.url && repo.ref === choice.ref);
-        const entry = repository
-          ? findEntry({ entries: repository.entries, problems: [] }, choice.kind, choice.id)
-          : undefined;
-
-        if ((action === "adopt" || action === "update") && (!repository || !entry)) {
-          toast("The entry is not in the repository any more", "error");
-          return;
-        }
-
-        if (action === "adopt" && !choice.adopted) {
-          // A hand-written definition is the project's own: adopting would
-          // overwrite it with a copy of the repository's version. The server
-          // half already prefers the local file; this is the same rule at the
-          // point where a file would be written.
-          const conflict = await existingDefinition(projectDir(), choice.kind, choice.id);
-          if (conflict) {
-            toast(`${choice.kind} ${choice.id} already exists here, and was not adopted: ${conflict}`, "error");
-            return;
-          }
-        }
-
-        if (action === "adopt" || action === "update") {
-          const spec: Spec = { id: choice.id, url: choice.url, ref: choice.ref };
-          await adoptEntry({
-            entry: entry as Entry,
-            projectDir: projectDir(),
-            spec,
-            commit: repository?.commit ?? "",
-          });
-          toast(`${choice.kind} ${choice.id} ${action === "adopt" ? "adopted" : "updated"}`, "success");
-          return;
-        }
-
-        if (action === "remove") {
-          if (choice.adopted) {
-            const item = adopted.find(
-              (candidate) => candidate.kind === choice.kind && candidate.id === choice.id,
-            );
-            if (item) await removeAdopted(item);
-            toast(`${choice.kind} ${choice.id} deleted`, "success");
-          } else {
-            const spec: Spec = { id: choice.id, url: choice.url, ref: choice.ref };
-            const file = (await readLists(projectDir())).file;
-            if (file) {
-              const text = await readConfig(file);
-              const key = choice.kind === "skill" ? "skills" : "agents";
-              const next = removeFromList(text, key, formatSpec(spec));
-              await writeConfig(file, next);
-            }
-            toast(`${choice.kind} ${choice.id} removed from the config`, "success");
-          }
-        }
-      };
-
-      const selected = await context.ui.dialog.select({
-        title: "Git skills and agents",
-        options,
-        search: (query, all) =>
-          all.filter((option) =>
-            `${option.title} ${option.description ?? ""} ${option.category ?? ""}`
-              .toLowerCase()
-              .includes(query.toLowerCase()),
-          ),
-        actions: [
-          {
-            bind: "ctrl+a",
-            title: "Adopt",
-            onTrigger: (value) => void act(decode(String(value)), "adopt"),
-          },
-          {
-            bind: "ctrl+u",
-            title: "Update",
-            onTrigger: (value) => void act(decode(String(value)), "update"),
-          },
-          {
-            bind: "ctrl+d",
-            title: "Remove",
-            onTrigger: (value) => void act(decode(String(value)), "remove"),
-          },
-          {
-            bind: "ctrl+r",
-            title: "Refresh",
-            selection: "none",
-            onTrigger: () => void browse(),
-          },
-        ],
-      });
-
-      const choice = selected === undefined ? undefined : decode(String(selected));
-      if (!choice) return;
-
-      // Choosing a repository entry declares it for the project.
-      if (!choice.adopted && choice.url !== "") {
-        const spec: Spec = { id: choice.id, url: choice.url, ref: choice.ref };
-        const file = (await readLists(projectDir())).file;
-        if (file) {
-          const text = await readConfig(file);
-          const key = choice.kind === "skill" ? "skills" : "agents";
-          await writeConfig(file, addToList(text, key, formatSpec(spec)));
-          toast(`${choice.kind} ${choice.id} added to the project config`, "success");
-        } else {
-          toast("This project has no opencode config to edit", "error");
-        }
+        // Enter on a catalog row enables it; on a project row there is nothing
+        // to enable, so it only reports.
+        if (view === "catalog") await enable(choice);
+        else toast(summaryOf(choice));
+        return;
       }
     };
+
+    function summaryOf(choice: Choice): string {
+      return `${choice.kind} ${choice.id} · ${choice.adopted ? "adopted copy" : "enabled from a repository"}`;
+    }
+
+    async function enable(choice: Choice | undefined): Promise<void> {
+      if (!choice) return;
+      if (choice.adopted) {
+        toast(`${choice.kind} ${choice.id} is an adopted copy; nothing to enable`);
+        return;
+      }
+      const file = (await readLists(projectDir())).file;
+      if (!file) {
+        toast("No configuration file to edit", "error");
+        return;
+      }
+      const key = choice.kind === "skill" ? "skills" : "agents";
+      const reference = formatSpec({ id: choice.id, url: choice.url, ref: choice.ref });
+      const text = await readConfig(file);
+      const next = addToList(text, key, reference);
+      if (next === text) {
+        toast(`${choice.kind} ${choice.id} is already enabled`);
+        return;
+      }
+      await writeConfig(file, next);
+      toast(`${choice.kind} ${choice.id} enabled`, "success");
+    }
+
+    async function disable(choice: Choice | undefined): Promise<void> {
+      if (!choice) return;
+      if (choice.adopted) {
+        const item = (await listAdopted(projectDir())).find(
+          (candidate) => candidate.kind === choice.kind && candidate.id === choice.id,
+        );
+        if (item) await removeAdopted(item);
+        toast(`${choice.kind} ${choice.id} deleted`, "success");
+        return;
+      }
+      const file = (await readLists(projectDir())).file;
+      if (!file) return;
+      const key = choice.kind === "skill" ? "skills" : "agents";
+      const reference = formatSpec({ id: choice.id, url: choice.url, ref: choice.ref });
+      const text = await readConfig(file);
+      const next = removeFromList(text, key, reference);
+      if (next === text) {
+        toast(`${choice.kind} ${choice.id} was not enabled`);
+        return;
+      }
+      await writeConfig(file, next);
+      toast(`${choice.kind} ${choice.id} disabled`, "success");
+    }
+
+    async function adopt(choice: Choice | undefined): Promise<void> {
+      if (!choice) return;
+      if (choice.adopted) {
+        toast(`${choice.kind} ${choice.id} is already adopted`);
+        return;
+      }
+      const conflict = await existingDefinition(projectDir(), choice.kind, choice.id);
+      if (conflict) {
+        toast(`${choice.kind} ${choice.id} already exists here, and was not adopted: ${conflict}`, "error");
+        return;
+      }
+      const checkout = await ensureCheckout({ url: choice.url, ref: choice.ref });
+      if (checkout.commit === "") {
+        toast(`${choice.kind} ${choice.id}: repository unavailable`, "error");
+        return;
+      }
+      const discovery = await discover(checkout.dir);
+      const entry = findEntry({ entries: discovery.entries, problems: [] }, choice.kind, choice.id);
+      if (!entry) {
+        toast(`${choice.kind} ${choice.id} is not in the repository any more`, "error");
+        return;
+      }
+      await adoptEntry({
+        entry,
+        projectDir: projectDir(),
+        spec: { id: choice.id, url: choice.url, ref: choice.ref },
+        commit: checkout.commit,
+      });
+      toast(`${choice.kind} ${choice.id} adopted`, "success");
+    }
+
+    async function update(choice: Choice | undefined): Promise<void> {
+      if (!choice || !choice.adopted) {
+        toast("Only an adopted copy can be updated", "error");
+        return;
+      }
+      await adopt(choice);
+    }
 
     context.keymap.layer(() => ({
       mode: "global",
@@ -281,3 +375,5 @@ export default Plugin.define({
     }));
   },
 });
+
+export type { State };

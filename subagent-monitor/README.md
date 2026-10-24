@@ -1,6 +1,6 @@
 # subagent-monitor
 
-Shows the agents working in the current session, in OpenCode's side panel.
+Shows the agents working in the current session, as a widget in OpenCode's sidebar.
 
 A background subagent is an ordinary child session — the `subagent` tool creates it with the
 current session as its parent — so the panel reads the session tree the TUI already keeps live:
@@ -13,8 +13,15 @@ missing subagent needs to see.
 
 ## Using it
 
-Open a session and run `/subagents`, or pick **Show subagents in this session** from the palette.
-The panel opens on the right of the session.
+Nothing to open: it is part of the sidebar, next to the session, the way
+[`@slkiser/opencode-quota`](https://www.npmjs.com/package/@slkiser/opencode-quota) is. It claims
+`sidebar.content`, so it is there while you work and there is nothing to close.
+
+```
+Subagents · 1 running · 1
+● general  44s
+○ explore  done
+```
 
 ## How it is built
 
