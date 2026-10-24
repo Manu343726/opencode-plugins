@@ -9,6 +9,8 @@
 
 export interface SessionInfoLike {
   readonly title?: string;
+  /** The session that launched this one, which is what makes the tree. */
+  readonly parentID?: string;
   readonly agent?: { readonly id?: string } | string;
   /** The outcome of the last completed run, recorded by the session at `time.idle`. */
   readonly outcome?: "succeeded" | "failed" | "interrupted";
@@ -26,6 +28,8 @@ export interface Row {
   readonly id: string;
   readonly title: string;
   readonly agent: string;
+  /** How deep in the tree of subagents this one is: a subagent of a subagent is 2. */
+  readonly depth: number;
   readonly running: boolean;
   readonly created: number;
   /** When the session last changed, which for a finished one is when it ended. */
@@ -62,26 +66,47 @@ function agentOf(info: SessionInfoLike | undefined): string {
  * is what a person looking for a missing subagent needs to see.
  */
 export function collect(sessions: SessionsLike, sessionID: string): Row[] {
-  return sessions
-    .family(sessionID)
-    .filter((id) => id !== sessionID)
-    .map((id) => {
-      const info = sessions.get(id);
-      return {
-        id,
-        title: info?.title ?? id,
-        agent: agentOf(info),
-        running: sessions.status(id) === "running",
-        created: info?.time?.created ?? 0,
-        updated: info?.time?.updated ?? info?.time?.created ?? 0,
-        ...(info?.time?.idle === undefined ? {} : { finishedAt: info.time.idle }),
-        ...(outcomeOf(info) === undefined ? {} : { outcome: outcomeOf(info) }),
-      };
-    })
-    .sort((left, right) => {
+  const children = new Map<string, string[]>();
+  for (const id of sessions.family(sessionID)) {
+    if (id === sessionID) continue;
+    const parent = sessions.get(id)?.parentID ?? sessionID;
+    const siblings = children.get(parent) ?? [];
+    siblings.push(id);
+    children.set(parent, siblings);
+  }
+
+  const rowOf = (id: string, depth: number): Row => {
+    const info = sessions.get(id);
+    return {
+      id,
+      title: info?.title ?? id,
+      agent: agentOf(info),
+      depth,
+      running: sessions.status(id) === "running",
+      created: info?.time?.created ?? 0,
+      updated: info?.time?.updated ?? info?.time?.created ?? 0,
+      ...(info?.time?.idle === undefined ? {} : { finishedAt: info.time.idle }),
+      ...(outcomeOf(info) === undefined ? {} : { outcome: outcomeOf(info) }),
+    };
+  };
+
+  // Depth first, so a subagent that launched another appears under it. Siblings
+  // keep the order the list has always had: running first, newest first.
+  const rows: Row[] = [];
+  const walk = (parent: string, depth: number): void => {
+    const ids = (children.get(parent) ?? []).map((id) => rowOf(id, depth));
+    ids.sort((left, right) => {
       if (left.running !== right.running) return left.running ? -1 : 1;
       return right.created - left.created;
     });
+    for (const row of ids) {
+      rows.push(row);
+      walk(row.id, depth + 1);
+    }
+  };
+  walk(sessionID, 1);
+
+  return rows;
 }
 
 export function elapsed(since: number, now: number): string {

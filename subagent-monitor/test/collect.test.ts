@@ -210,3 +210,75 @@ test("an agent with no description still lists, named by its id", () => {
   const rows = agentRows([{ id: "explore" }], []);
   assert.deepEqual(rows, [{ id: "explore", name: "explore", description: "", running: 0 }]);
 });
+
+/** A session tree: root → a, b; a → a1 → a1x. */
+function tree(): SessionsLike {
+  const infos: Record<string, { parentID?: string; agent: string; title: string; created: number; status: "idle" | "running" }> = {
+    root: { agent: "build", title: "root", created: 0, status: "running" },
+    a: { parentID: "root", agent: "orchestrator", title: "a", created: 10, status: "running" },
+    b: { parentID: "root", agent: "reviewer", title: "b", created: 20, status: "idle" },
+    a1: { parentID: "a", agent: "verifier", title: "a1", created: 11, status: "running" },
+    a1x: { parentID: "a1", agent: "test-engineer", title: "a1x", created: 12, status: "idle" },
+  };
+  return {
+    family: () => Object.keys(infos),
+    get: (id) => {
+      const info = infos[id];
+      return info
+        ? { title: info.title, parentID: info.parentID, agent: info.agent, time: { created: info.created } }
+        : undefined;
+    },
+    status: (id) => infos[id]?.status ?? "idle",
+  };
+}
+
+test("a subagent that launched another hangs under it, depth first", () => {
+  const rows = collect(tree(), "root");
+  assert.deepEqual(rows.map((row) => [row.id, row.depth]), [
+    ["a", 1],
+    ["a1", 2],
+    ["a1x", 3],
+    ["b", 1],
+  ]);
+});
+
+test("siblings keep the order: running first, then newest", () => {
+  const sessions: SessionsLike = {
+    family: () => ["root", "old-idle", "new-idle", "run"],
+    get: (id) => ({
+      parentID: "root",
+      agent: "explore",
+      title: id,
+      time: { created: id === "old-idle" ? 1 : id === "new-idle" ? 3 : 2 },
+    }),
+    status: (id) => (id === "run" ? "running" : "idle"),
+  };
+  assert.deepEqual(collect(sessions, "root").map((row) => row.id), ["run", "new-idle", "old-idle"]);
+});
+
+test("the count per agent includes the nested ones", () => {
+  const agents = [
+    { id: "orchestrator" },
+    { id: "verifier" },
+    { id: "test-engineer" },
+    { id: "reviewer" },
+  ];
+  const rows = agentRows(agents, collect(tree(), "root"));
+  assert.deepEqual(
+    rows.map((row) => [row.id, row.running]),
+    [
+      ["orchestrator", 1],
+      ["verifier", 1],
+      ["reviewer", 0],
+      ["test-engineer", 0],
+    ],
+  );
+});
+
+test("the view is configurable and the flat list is the default", async () => {
+  const { viewOf } = await import("../tui.ts");
+  assert.equal(viewOf(undefined), "work");
+  assert.equal(viewOf({}), "work");
+  assert.equal(viewOf({ view: "agents" }), "agents");
+  assert.equal(viewOf({ view: "nonsense" }), "work");
+});

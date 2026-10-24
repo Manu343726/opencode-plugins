@@ -42,6 +42,17 @@ const text = (content: string, attributes?: Record<string, unknown>) =>
  */
 const SEEN_FINISHED = new Map<string, number>();
 
+export type View = "work" | "agents";
+
+/**
+ * How the list is drawn: the work itself, or the agents with their work under
+ * them. Configurable, and the flat list is the default because it answers the
+ * question people open the sidebar for — what is happening now.
+ */
+export function viewOf(options: Record<string, unknown> | undefined): View {
+  return options?.view === "agents" ? "agents" : "work";
+}
+
 /** How long a finished subagent stays in the list. */
 function finishedTtlMs(context: { options?: Record<string, unknown> }): number {
   const configured = context.options?.finishedTtlMinutes;
@@ -49,7 +60,7 @@ function finishedTtlMs(context: { options?: Record<string, unknown> }): number {
   return minutes * 60_000;
 }
 
-function SidebarBody(props: { sessionID: string; ttlMs: number }) {
+function SidebarBody(props: { sessionID: string; ttlMs: number; view: View }) {
   const context = usePlugin();
 
   // The agent's own colour, the one OpenCode uses for it in its banner. The
@@ -164,19 +175,29 @@ function SidebarBody(props: { sessionID: string; ttlMs: number }) {
    * `Show` + `For` inside a slot did not draw their children here — the header
    * updated and the list stayed empty — so the body is rebuilt from the rows
    * whenever they change. One binding, one place to be wrong.
+   *
+   * Two presentations of the same rows: the work itself, with a subagent's own
+   * subagents hanging under it, or the agents with their work under them.
    */
   const body = (): unknown[] => {
     const list = rows();
+    const running = list.filter((row) => row.running).length;
     const header = h("text", {
       fg: muted(),
       children:
         list.length === 0
           ? "Subagents · none"
-          : `Subagents · ${list.filter((row) => row.running).length} running · ${list.length} total`,
+          : `Subagents · ${running} running · ${list.length} total`,
     });
 
-    const items = list.map((row) =>
-      h("box", {
+    if (props.view === "agents") return [header, ...byAgent(list)];
+    return [header, ...byWork(list)];
+  };
+
+  const byWork = (list: Row[]): unknown[] =>
+    list.map((row) => {
+      const indent = "  ".repeat(Math.max(0, row.depth - 1));
+      return h("box", {
         flexDirection: "column",
         children: [
           h("box", {
@@ -185,7 +206,7 @@ function SidebarBody(props: { sessionID: string; ttlMs: number }) {
             children: [
               h("text", {
                 fg: markerColor(statusKind(row.running, row.outcome)),
-                children: row.running ? "●" : "○",
+                children: `${indent}${row.running ? "●" : "○"}`,
               }),
               h("text", { fg: colorOf(row.agent), children: shorten(row.agent, 14) }),
               h("text", {
@@ -196,49 +217,57 @@ function SidebarBody(props: { sessionID: string; ttlMs: number }) {
               }),
             ],
           }),
-          h("text", { fg: muted(), children: `  ${shorten(row.title, 34)}` }),
-        ],
-      }),
-    );
-
-    // The agents this session can use, and how busy each one is. The count comes
-    // from the subagents above: running means a child of this session is
-    // executing with that agent.
-    const agents = context.data.location.agent.list(context.location) ?? [];
-    const available = agentRows(agents, list);
-    const agentItems = available.map((agent) =>
-      h("box", {
-        flexDirection: "column",
-        children: [
-          h("box", {
-            flexDirection: "row",
-            gap: 1,
-            children: [
-              h("text", {
-                fg: agent.running > 0 ? feedback("info") : muted(),
-                children: agent.running > 0 ? "●" : "○",
-              }),
-              h("text", { fg: colorOf(agent.id), children: shorten(agent.id, 14) }),
-              h("text", {
-                fg: agent.running > 0 ? feedback("info") : muted(),
-                children: agent.running > 0 ? `${agent.running} running` : "idle",
-              }),
-            ],
-          }),
           h("text", {
             fg: muted(),
-            children: `  ${shorten(agent.description, 40)}`,
+            children: `  ${indent}${shorten(row.title, 34)}`,
           }),
         ],
-      }),
-    );
-
-    const agentsHeader = h("text", {
-      fg: muted(),
-      children: `Agents · ${available.length}`,
+      });
     });
 
-    return [header, ...items, agentsHeader, ...agentItems];
+  const byAgent = (list: Row[]): unknown[] => {
+    const agents = context.data.location.agent.list(context.location) ?? [];
+    const available = agentRows(agents, list);
+    const out: unknown[] = [];
+
+    for (const agent of available) {
+      const mine = list.filter((row) => row.agent === agent.id);
+      out.push(
+        h("box", {
+          flexDirection: "column",
+          children: [
+            h("box", {
+              flexDirection: "row",
+              gap: 1,
+              children: [
+                h("text", {
+                  fg: agent.running > 0 ? feedback("info") : muted(),
+                  children: agent.running > 0 ? "●" : "○",
+                }),
+                h("text", { fg: colorOf(agent.id), children: shorten(agent.id, 14) }),
+                h("text", {
+                  fg: agent.running > 0 ? feedback("info") : muted(),
+                  children: agent.running > 0 ? `${agent.running} running` : "idle",
+                }),
+              ],
+            }),
+            h("text", { fg: muted(), children: `  ${shorten(agent.description, 40)}` }),
+          ],
+        }),
+      );
+
+      for (const row of mine) {
+        out.push(
+          h("text", {
+            fg: muted(),
+            children: `    ${row.running ? "●" : "○"} ${shorten(row.title, 30)} ${
+              row.running ? elapsed(row.created, tick()) : STATUS_LABEL[statusKind(false, row.outcome)]
+            }`,
+          }),
+        );
+      }
+    }
+    return out;
   };
 
   return h("box", {
@@ -258,10 +287,11 @@ export default Plugin.define({
     if (typeof terminal.keymap?.layer !== "function") return;
 
     const ttlMs = finishedTtlMs(context as unknown as { options?: Record<string, unknown> });
+    const view = viewOf(context.options as Record<string, unknown> | undefined);
 
     const unclaim = context.ui.slot({
       append: "sidebar.content",
-      render: (props) => h(SidebarBody, { sessionID: props.sessionID, ttlMs }),
+      render: (props) => h(SidebarBody, { sessionID: props.sessionID, ttlMs, view }),
     });
 
     return () => {
