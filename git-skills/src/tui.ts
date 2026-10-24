@@ -68,13 +68,19 @@ interface Data {
   readonly lists: Awaited<ReturnType<typeof readLists>>;
   readonly scans: readonly Scan[];
   readonly adopted: Awaited<ReturnType<typeof listAdopted>>;
+  readonly warnings: readonly string[];
 }
 
-async function scanAll(targets: readonly Target[]): Promise<Scan[]> {
+async function scanAll(targets: readonly Target[]): Promise<{ scans: Scan[]; warnings: string[] }> {
   const scans: Scan[] = [];
+  const warnings: string[] = [];
   for (const target of targets) {
     const checkout = await ensureCheckout({ url: target.url, ref: target.ref });
-    if (checkout.commit === "") continue;
+    if (checkout.warning) warnings.push(`${target.url}@${target.ref}: ${checkout.warning}`);
+    if (checkout.commit === "") {
+      if (!checkout.warning) warnings.push(`${target.url}@${target.ref}: no commit`);
+      continue;
+    }
     const discovery = await discover(checkout.dir);
     scans.push({
       url: target.url,
@@ -84,14 +90,14 @@ async function scanAll(targets: readonly Target[]): Promise<Scan[]> {
       warning: checkout.warning,
     });
   }
-  return scans;
+  return { scans, warnings };
 }
 
 async function load(projectDir: string): Promise<Data> {
   const lists = await readLists(projectDir);
-  const scans = await scanAll(knownTargets(lists));
+  const { scans, warnings } = await scanAll(knownTargets(lists));
   const adopted = await listAdopted(projectDir);
-  return { lists, scans, adopted };
+  return { lists, scans, adopted, warnings };
 }
 
 function catalogRows(data: Data): Row[] {
@@ -486,6 +492,14 @@ function Browser(props: { context: Context; directory: string; done: () => void 
       h("text", {
         fg: () => muted(),
         children: () => `${rows().length} item(s) · ${props.directory}`,
+      }),
+      h(Show, {
+        when: () => (data()?.warnings.length ?? 0) > 0,
+        children: () =>
+          h("text", {
+            fg: () => props.context.theme?.text?.error,
+            children: () => data()?.warnings.join(" · ") ?? "",
+          }),
       }),
     ],
   });
