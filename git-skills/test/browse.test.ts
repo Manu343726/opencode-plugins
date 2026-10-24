@@ -1,7 +1,15 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { decode, encode, isDeclared, knownTargets, shortLabel, type Choice } from "../src/browse.ts";
+import {
+  adoptedChoice,
+  decode,
+  encode,
+  isDeclared,
+  knownTargets,
+  shortLabel,
+  type Choice,
+} from "../src/browse.ts";
 
 const choice: Choice = {
   kind: "agent",
@@ -79,4 +87,22 @@ test("a repository label is short enough to leave the title room", () => {
   );
   assert.equal(shortLabel({ url: "https://git.example/a/b/skills", ref: "v1.2.0" }), "skills@v1.2.0");
   assert.equal(shortLabel({ url: "git@host:org/repo.git", ref: "main" }), "repo@main");
+});
+
+test("an adopted row carries the repository it came from", () => {
+  const choice = adoptedChoice("agent", "reviewer", "reviewer@ssh://git@host:2222/o/r.git:v1");
+  assert.deepEqual(choice, {
+    kind: "agent",
+    id: "reviewer",
+    url: "ssh://git@host:2222/o/r.git",
+    ref: "v1",
+    adopted: true,
+  });
+  assert.deepEqual(decode(encode(choice)), choice);
+});
+
+test("an adopted row with unreadable provenance is still a row", () => {
+  const choice = adoptedChoice("skill", "docs", "not a reference");
+  assert.equal(choice.adopted, true);
+  assert.equal(choice.url, "");
 });

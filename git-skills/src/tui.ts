@@ -13,7 +13,15 @@ import { adoptEntry, listAdopted, removeAdopted, remoteDigest, snapshot, STATE_L
 import { addToList, readConfig, readLists, removeFromList, writeConfig } from "./config.ts";
 import { discover, findEntry, type Entry } from "./discover.ts";
 import { ensureCheckout } from "./git.ts";
-import { encode, decode, isDeclared, knownTargets, shortLabel, type Choice } from "./browse.ts";
+import {
+  adoptedChoice,
+  decode,
+  encode,
+  isDeclared,
+  knownTargets,
+  shortLabel,
+  type Choice,
+} from "./browse.ts";
 import { formatSpec, parseSpec, type Spec } from "./ref.ts";
 
 interface RepoScan {
@@ -105,13 +113,7 @@ export default Plugin.define({
         const state = await snapshot(item, remote);
         options.push({
           title: `${item.kind} ${item.id}`,
-          value: encode({
-            kind: item.kind,
-            id: item.id,
-            url: "",
-            ref: "",
-            adopted: true,
-          }),
+          value: encode(adoptedChoice(item.kind, item.id, item.provenance.id)),
           description: `${STATE_LABEL[state.state]} — ${item.provenance.id}`,
           category: "Adopted",
         });

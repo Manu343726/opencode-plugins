@@ -79,6 +79,23 @@ export function knownTargets(lists: {
   return [...targets.values()];
 }
 
+/**
+ * The row for an adopted copy.
+ *
+ * Its provenance names the repository it came from, and the update action needs
+ * that: an adopted row encoded with an empty url cannot be matched to a scanned
+ * repository, so updating it answered "the entry is not in the repository any
+ * more" — measured, and the reason this function exists.
+ */
+export function adoptedChoice(kind: Kind, id: string, provenanceID: string): Choice {
+  try {
+    const spec = parseSpec(provenanceID);
+    return { kind, id, url: spec.url, ref: spec.ref, adopted: true };
+  } catch {
+    return { kind, id, url: "", ref: "", adopted: true };
+  }
+}
+
 /** Whether a reference in the configuration already points at this entry. */
 export function isDeclared(entry: { kind: Kind; id: string }, target: Target, lists: {
   readonly skills: readonly string[];
