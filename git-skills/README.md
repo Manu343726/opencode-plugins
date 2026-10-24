@@ -133,14 +133,19 @@ Updating an entry with local changes asks first, because it overwrites them.
 
 ## Browsing
 
-The TUI adds a `/git-skills` command. It lists the repositories the project references plus those
-in `repos[]`, with each entry's kind, id and description, and the state of anything already
-adopted. Choosing an entry adds its reference to the project configuration; the footer actions
-adopt (`ctrl+a`), update (`ctrl+u`), remove (`ctrl+d`) and refresh (`ctrl+r`).
+`/git-skills` (or **Browse git skills and agents** in the palette) opens one large modal with two
+tabs. `tab` moves between them, `esc` closes it, and each tab has its own search box.
 
-The plugin also registers a `git_skills` tool so the agent can answer the same questions without
-the TUI: `action: "status"` (what is loaded), `"adopted"` (copies and their drift),
-`"references"` (what the configuration declares).
+| Tab | Shows | Keys |
+|---|---|---|
+| **Catalog** | every entry in the known repositories, with what the project has already enabled | `enter` enable · `ctrl+a` adopt · `tab` project |
+| **Project** | what the project actually uses: declared references and adopted copies, each with its state | `ctrl+u` update · `ctrl+d` disable or delete · `tab` catalog |
+
+*Enable* adds the reference to the project's configuration; *disable* removes it. On an adopted
+copy, `ctrl+d` deletes the copy instead, and `ctrl+u` refreshes it from the repository. Adopting
+refuses when the id already exists in the project as a hand-written file — that file is the
+project's, and replacing it with a copy of the repository's version would be a surprise, not a
+feature.
 
 ### Loading the TUI half
 
