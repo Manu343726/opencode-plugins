@@ -40,17 +40,31 @@ A disabled reference stays in the configuration and is not loaded.
 
 ## The tool
 
-`git_skills({ action })` answers three questions:
+`git_skills({ action })` answers five questions:
 
 | action | answer |
 |---|---|
 | `status` | what is loaded right now, the commit each entry came from, and everything skipped and why |
 | `references` | what the configuration declares, and which file it was read from |
 | `adopted` | the copies the project owns, and whether each drifted from its repository |
+| `refresh` | pulls every configured reference again, and says which shas moved, which entries changed, and what will not take effect until a new session |
 | `propose` | pushes the local changes of every drifted copy to a branch of its repository, and opens a pull request for each |
 
 Use `status` before claiming a skill or agent is available: the session's own list is the truth, and
 an entry can be skipped because the project already defines it by hand, or because it is disabled.
+
+Use `refresh` after a change to a shared skill or agent has landed in its repository, and before
+claiming this session is running it. It fetches every reference the configuration names — the same
+pull the browser does, with the cache TTL bypassed — and answers with:
+
+- the **old and new sha** of each reference, and whether it moved;
+- the entries whose text changed, with the fields that differ and the files they came from;
+- what has **not** taken effect: an agent's `mode` and `permissions` are resolved when a session
+  starts, so a refresh re-registers them for the next session and cannot change the one already
+  running. When the report says that, start a new session before relying on the new role.
+
+A second `refresh` with nothing new upstream answers "no change" and fetches again without
+re-cloning: the checkout is reused, so the cost is one `git fetch` per reference.
 
 ## Reading the state of an adopted copy
 
@@ -83,6 +97,11 @@ outdated.
   order: the reference is not in the configuration, it is disabled, the project has its own file
   for that id (the local file wins), or the id does not exist in the repository — the status names
   which.
+- **A change to a shared role has just been merged.** OpenCode loaded these definitions when the
+  session started, so editing the repository changes nothing on its own. Ask for
+  `git_skills({ action: "refresh" })` and read the answer: it names the shas that moved and the
+  entries that changed, and it says plainly when an agent's `mode` or `permissions` moved, because
+  those need a new session.
 - **Adding a shared skill or agent.** Edit the project's configuration; do not copy files. The
   reference is the whole record.
 - **Changing something for this project only.** Adopt it and edit the copy: adopting is what makes

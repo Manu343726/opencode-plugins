@@ -23,7 +23,6 @@ import {
   knownTargets,
   shortLabel,
   type Choice,
-  type Target,
 } from "./browse.ts";
 import {
   adoptEntry,
@@ -46,23 +45,16 @@ import {
   writeConfig,
 } from "./config.ts";
 import type { Item } from "./items.ts";
-import { discover, findEntry, type Entry } from "./discover.ts";
+import { discover, findEntry } from "./discover.ts";
 import { proposeChange } from "./propose.ts";
 import { ensureCheckout } from "./git.ts";
+import { scanTargets, type Scan } from "./refresh.ts";
 import { formatSpec, parseSpec, type Kind, type Spec } from "./ref.ts";
 import { Plugin } from "@opencode/plugin/tui";
 
 export const PANEL = "git-skills.browser";
 
 type View = "catalog" | "project";
-
-interface Scan {
-  readonly url: string;
-  readonly ref: string;
-  readonly commit: string;
-  readonly entries: readonly Entry[];
-  readonly warning?: string;
-}
 
 interface Row {
   readonly title: string;
@@ -75,23 +67,6 @@ const TABS: Readonly<Record<View, { title: string; other: View; otherLabel: stri
   catalog: { title: "Git skills · catalog", other: "project", otherLabel: "Project" },
   project: { title: "Git skills · project", other: "catalog", otherLabel: "Catalog" },
 };
-
-async function scanAll(targets: readonly Target[]): Promise<Scan[]> {
-  const scans: Scan[] = [];
-  for (const target of targets) {
-    const checkout = await ensureCheckout({ url: target.url, ref: target.ref });
-    if (checkout.commit === "") continue;
-    const discovery = await discover(checkout.dir);
-    scans.push({
-      url: target.url,
-      ref: target.ref,
-      commit: checkout.commit,
-      entries: discovery.entries,
-      warning: checkout.warning,
-    });
-  }
-  return scans;
-}
 
 function rowsForCatalog(
   scans: readonly Scan[],
@@ -219,7 +194,7 @@ export default Plugin.define({
         return;
       }
 
-      const scans = await scanAll(targets);
+      const scans = await scanTargets(targets);
       for (const scan of scans) if (scan.warning) toast(scan.warning, "error");
 
       let view: View = "catalog";
