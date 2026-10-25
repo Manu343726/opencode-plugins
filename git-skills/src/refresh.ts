@@ -403,10 +403,10 @@ export function format(report: Report, notes: readonly string[] = []): string {
   }
 
   if (report.removed.length > 0) {
-    lines.push("no longer declared:");
+    lines.push("no longer loaded:");
     for (const entry of report.removed) {
       lines.push(
-        `  ${entry.kind} ${entry.id} — still registered in this session; a new session starts without it`,
+        `  ${entry.kind} ${entry.id} (was ${shortSha(entry.sha)}) — the reload stops registering it, and a new session never sees it`,
       );
     }
   }

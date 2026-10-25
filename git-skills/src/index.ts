@@ -254,8 +254,14 @@ export default Plugin.define({
           (resolved) => resolved.entry.kind === entry.kind && resolved.spec.id === entry.id,
         );
         if (wanted === undefined) continue;
+        // The text the transform registers, read the way the transform reads it:
+        // from the canonical `document`, not from the raw file's body.
+        const expected =
+          entry.kind === "skill"
+            ? parseSkillMeta(wanted.document, entry.id).body
+            : parseAgent(wanted.document, entry.id).fields.system;
         const held = entry.kind === "skill" ? applied.skills.get(entry.id) : applied.agents.get(entry.id);
-        if (held !== wanted.body) stale.push(`${entry.kind} ${entry.id}`);
+        if (held !== expected) stale.push(`${entry.kind} ${entry.id}`);
       }
 
       if (stale.length > 0) {
