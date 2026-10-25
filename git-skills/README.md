@@ -187,6 +187,29 @@ Adopting refuses when the id already exists in the project as a hand-written fil
 project's, and replacing it with a copy of the repository's version would be a surprise, not a
 feature.
 
+## Refreshing from an agent session
+
+A session loads these definitions when it starts, so a commit that lands afterwards changes nothing
+by itself — and until now only the browser could pull it. `git_skills({ action: "refresh" })` is the
+tool counterpart of the browser's refresh, and it calls the same code: `resolve()`, and through it
+`git.ts:ensureCheckout`, which is the only thing in this plugin that clones or fetches. `scanTargets`
+— the scan the modal runs — lives in `src/refresh.ts` so both halves use one implementation.
+
+It fetches every reference the configuration names with the cache TTL bypassed, then reloads the two
+registries and reports:
+
+| Part | What it answers |
+|---|---|
+| references | each url+ref with its old and new sha, and whether it moved |
+| changed / added / removed | the entries whose text differs, the fields that differ, and the files they came from |
+| not in effect until a new session | an agent's `mode` and `permissions`, which the session resolved when it started |
+| verified | whether the rebuilt registry actually holds the new text, read back after the reload |
+
+Nothing changed upstream means "no change": the checkout is reused (no clone), and the registries are
+not reloaded at all. A refresh that ran but was overridden does not read as success — it says which
+entry the session still holds the old text of, because reporting `ok` over an inert reload is the
+failure this tool exists to prevent.
+
 ## Proposing a change back
 
 An adopted copy can be edited like any file, and those edits can go back to the repository they came
