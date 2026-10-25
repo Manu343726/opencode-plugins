@@ -360,6 +360,21 @@ function shortSha(sha: string): string {
 }
 
 /**
+ * Where the entry came from, as one path a reader can open.
+ *
+ * `Entry.origin` is the repository-relative path — `agents/reviewer.md`, or the
+ * directory that holds a skill's `SKILL.md`. `files` is what adopting copies,
+ * and for an agent it is only the basename: `reviewer.md` names nothing on its
+ * own the moment a skill and an agent share it. Origin comes first and `files`
+ * is the fallback for an entry that somehow has none, which is not a case
+ * `discover` produces today.
+ */
+function where(entry: { readonly origin: string; readonly files: readonly string[] }): string {
+  const origin = entry.origin.trim();
+  return origin === "" ? entry.files.join(", ") : origin;
+}
+
+/**
  * The report as text: what moved, what changed, and what a running session will
  * not see. `notes` is where the caller adds what only it can know — whether the
  * rebuilt registry actually holds the new text.
@@ -390,7 +405,7 @@ export function format(report: Report, notes: readonly string[] = []): string {
     lines.push("changed:");
     for (const entry of report.changed) {
       lines.push(
-        `  ${entry.kind} ${entry.id}: ${entry.fields.join(", ")} (${shortSha(entry.oldSha)} → ${shortSha(entry.newSha)}) — ${entry.files.join(", ")}`,
+        `  ${entry.kind} ${entry.id}: ${entry.fields.join(", ")} (${shortSha(entry.oldSha)} → ${shortSha(entry.newSha)}) — ${where(entry)}`,
       );
     }
   }
@@ -398,7 +413,7 @@ export function format(report: Report, notes: readonly string[] = []): string {
   if (report.added.length > 0) {
     lines.push("added:");
     for (const entry of report.added) {
-      lines.push(`  ${entry.kind} ${entry.id} @ ${shortSha(entry.newSha)} — ${entry.files.join(", ")}`);
+      lines.push(`  ${entry.kind} ${entry.id} @ ${shortSha(entry.newSha)} — ${where(entry)}`);
     }
   }
 

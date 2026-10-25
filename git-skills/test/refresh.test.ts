@@ -39,6 +39,16 @@ mode: subagent
 Reply with exactly: SHARED-REVIEWER, and name the files you read.
 `;
 
+const EDITED_SKILL_MD = `---
+name: Homelable Docs
+description: How to write and maintain the homelab documentation
+---
+
+# Homelable Docs
+
+Body of the skill, now with one line more.
+`;
+
 async function fixture() {
   const repo = await makeRepo({
     files: {
@@ -109,6 +119,24 @@ test("a refresh reports the shas it moved, and which entry changed", async () =>
   assert.match(text, /1 reference\(s\) moved/);
   assert.match(text, /agent reviewer: content/);
   assert.match(text, /agents\/reviewer\.md/);
+});
+
+test("a changed skill names the directory it came from, not just SKILL.md", async () => {
+  const { dir, project, cacheDir } = await fixture();
+
+  const first = await pull(project, { cacheDir });
+  await commitMore(dir, { "skills/docs/SKILL.md": EDITED_SKILL_MD }, "edit the docs skill");
+  const report = compare(snapshotOf(first), await pull(project, { cacheDir }));
+
+  assert.equal(report.changed.length, 1);
+  assert.equal(report.changed[0]?.kind, "skill");
+  assert.equal(report.changed[0]?.id, "docs");
+  assert.deepEqual(report.changed[0]?.fields, ["content"]);
+  assert.equal(report.changed[0]?.origin, "skills/docs");
+
+  const text = format(report);
+  assert.match(text, /skill docs: content/);
+  assert.match(text, /— skills\/docs/);
 });
 
 test("a second refresh reports no change and reuses the checkout", async () => {
